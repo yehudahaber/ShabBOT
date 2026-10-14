@@ -19,6 +19,16 @@ Shabbat & Yom Tov automation for Home Assistant. Home Assistant stays the hub fo
 3. **Settings → Devices & services → Add integration → ShabBOT.** Set candle-lighting minutes, havdalah rule, and Israel/Diaspora. Location and time zone come from Home Assistant.
 4. Open **ShabBOT** in the sidebar.
 
+### Trying the announcements branch
+
+Announcements are on the `feature/announcements` branch of [yehudahaber/ShabBOT](https://github.com/yehudahaber/ShabBOT) (not an upstream release yet). HACS lists releases in the download dialog, and a branch has to be named in the update action.
+
+1. HACS → ⋮ → **Custom repositories** → `https://github.com/yehudahaber/ShabBOT`, category **Integration**. Add it, then download ShabBOT once so HACS tracks the repository. If ShabBOT from another repository is already installed, remove that copy first — both write `custom_components/shabbot`.
+2. **Developer Tools → Actions → Update: Install.** Choose the ShabBOT update entity. Set **Version** to `feature/announcements`.
+3. Restart Home Assistant. Open **ShabBOT** in the sidebar → **Settings → Announcements**.
+
+This branch sets `hacs.json` `zip_release` to false and commits the built panel, because HACS downloads a release zip for tags and a git archive for a branch. A tagged upstream release should turn `zip_release` back on (the release workflow builds `shabbot.zip` and the panel).
+
 ShabBOT starts in **dry run**: it logs what it would do without touching any device. Turn it off ("Go live") after a Shabbat of watching the Activity tab.
 
 Works on every Home Assistant install type (OS, Supervised, Container, Core). Install it separately in each home; use **Settings → Export / Import** to copy routines between homes.
@@ -49,6 +59,31 @@ Works on every Home Assistant install type (OS, Supervised, Container, Core). In
 Available zmanim: `alot`, `sunrise`, `chatzot`, `mincha_gedola`, `plag`, `candle_lighting` (when candles are lit that night), `sunset`, `tzeit` (8.5°), `havdalah` (the end of this Shabbat/Yom Tov, as configured).
 
 **Early Shabbat (summer)**: Settings → Early Shabbat lights candles at a fixed time (e.g. 7:00 PM) on Fridays when the normal time would be later than a cutoff (e.g. 7:15 PM), never before plag hamincha, and only on a plain Shabbat (not when it is also Yom Tov). Device protection starts at the early time, and routine rows written with `candle_lighting` move with it; rows written with `sunset` don't, so prefer `candle_lighting` for anything tied to the start of Shabbat.
+
+## Announcements
+
+Settings → Announcements speaks a short sentence on the media players you pick, using a TTS engine and an optional voice. It starts off. Each announcement (candle countdown, shkia countdown, the final warning, motzaei, and next-meal preparation) has its own switch. **Dry run** logs the sentence on the Activity tab instead of speaking. `shabbot.announce` (or **Speak a test** in the panel) says one sentence immediately. The panel lists the next few times so you can check the schedule before it runs.
+
+| When | Default |
+|---|---|
+| Before candle lighting | 60, 30, 15 and 5 minutes: "60 minutes until candle lighting" |
+| After candle lighting, before shkia | the same marks, but only the ones that fall after candles are lit, then a final warning 1 minute before shkia: "Shkia in one minute. Stop all melacha." |
+| Havdalah | "It's now 60 minutes after shkia and it's muttar to do melacha." On Shabbat the number is the Shabbat havdalah setting (or the real sun-angle gap). On a Yom Tov that is not Shabbat it is the Yom Tov end setting. |
+
+**Yom Tov sequences.** "Muttar" is said only when issur melacha actually ends (the end of the whole Shabbat/Yom Tov block), never on a night that is still inside it.
+
+- **First night** of Shabbat or Yom Tov, including an early Shabbat: countdown to candle lighting, then countdown to shkia. Early Shabbat moves the candle countdown to the early time; the shkia warning stays on the real sunset.
+- **Yom Tov into Shabbat** (for example Friday night of a Yom Tov that continues into Shabbat): candles are lit before shkia, so the ordinary candle and shkia warnings run. There is no "muttar" that afternoon.
+- **Second Yom Tov night that is not Shabbat**: the previous day has ended, so you may start preparing for the next meal. There is no shkia countdown and no "stop all melacha". Its own minute marks (60, 30, 15 and 5 by default) count down to that time ("30 minutes until you can start preparing for the next meal") and one sentence fires when preparation may begin. Turning off the candle-lighting countdown does not turn this off. After a Shabbat, the time is Shabbat havdalah. After a Yom Tov day, it is the Yom Tov end setting (default 42 minutes after shkia; 42, 50, 60, 72, or a custom value). That setting is global: device schedules use the same end.
+- **Shabbat into Yom Tov** (for example Rosh Hashana starting on Shabbat): Saturday night is next-meal preparation at Shabbat havdalah, not a second candle lighting. The block then ends on Yom Tov, so motzaei uses the Yom Tov end offset.
+
+**Lead.** A global offset in seconds, with an optional per-player override, fires the trigger that early so TTS generation and speaker buffering (Sonos is often several seconds) land on the nominal time. `0` means exactly on time. A moment that was missed while Home Assistant was down is not spoken late.
+
+**Volume.** An optional percentage is applied before the sentence and put back after it. Sonos players use snapshot/restore, so the previous playback returns as well. Other players only get their previous volume restored.
+
+Templates accept `{minutes}`, `{unit}` (minute/minutes), `{minutes_words}` ("one minute"), `{occasion}`, and `{title}`. Leave a template blank to skip that sentence.
+
+Players, the TTS engine, and per-player leads are not included in Export / Import (they belong to one home). The minute marks, templates, and lead are.
 
 **Which routine runs** (most specific first):
 1. A choice made for that date on the calendar (a different routine, or *Skip this meal*).
@@ -81,7 +116,7 @@ Z-Wave note: Zooz switches send scene events only when *scene control* is enable
 | `select.shabbot_mode` | Normal / your modes (selecting one starts it today, open-ended) |
 | `switch.shabbot_device_protection`, `switch.shabbot_dry_run` | |
 
-Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_routine`, `shabbot.skip_slot`, `shabbot.reconcile`.
+Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_routine`, `shabbot.skip_slot`, `shabbot.reconcile`, `shabbot.announce`.
 
 ## Moving over from SmartThings / Lutron / Node-RED
 

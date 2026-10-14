@@ -8,12 +8,33 @@ from typing import Any
 from homeassistant.components import websocket_api
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 import voluptuous as vol
 
-from .const import DEFAULT_DEVICE, DEFAULT_SETTINGS, DOMAIN, SIGNAL_ACTIVITY, SIGNAL_UPDATE, VERSION
+from .const import (
+    DEFAULT_DEVICE,
+    DEFAULT_SETTINGS,
+    DOMAIN,
+    EXPORT_SKIP_SETTINGS,
+    PLAN_HORIZON_DAYS,
+    SIGNAL_ACTIVITY,
+    SIGNAL_UPDATE,
+    VERSION,
+)
 from .core import gestures, jcal, planner, timeexpr
+from .core.announcements import (
+    coerce_groups,
+    coerce_lead,
+    coerce_marks,
+    coerce_player_leads,
+    coerce_players,
+    coerce_templates,
+    coerce_volume,
+    options_from_settings,
+    plan_announcements,
+)
 from .manager import ShabbotManager
 from .store import new_id
 
@@ -116,11 +137,26 @@ DEVICE_SCHEMA = vol.Schema({
     vol.Optional("after_override"): vol.In(["reassert", "next_transition"]),
     vol.Optional("override_group"): [str],
 })
+
+
+def _as_vol(fn):
+    """Turn a ValueError from the announcement coercers into a config-flow error."""
+
+    def _run(value):
+        try:
+            return fn(value)
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
+
+    return _run
+
+
 SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("candle_lighting_min"): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
     vol.Optional("havdalah_mode"): vol.In(["degrees", "minutes"]),
     vol.Optional("havdalah_degrees"): vol.All(vol.Coerce(float), vol.Range(min=5, max=20)),
     vol.Optional("havdalah_minutes"): vol.All(vol.Coerce(int), vol.Range(min=20, max=90)),
+    vol.Optional("yom_tov_end_minutes"): vol.All(vol.Coerce(int), vol.Range(min=20, max=90)),
     vol.Optional("israel"): bool,
     vol.Optional("use_elevation"): bool,
     vol.Optional("early_shabbat"): bool,
@@ -135,6 +171,20 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("storm_window_min"): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
     vol.Optional("notify_service"): vol.Any(None, str),
     vol.Optional("notify_overrides"): bool,
+    vol.Optional("announce_enabled"): bool,
+    vol.Optional("announce_players"): _as_vol(lambda v: list(coerce_players(v))),
+    vol.Optional("announce_tts_entity"): vol.Any(None, str),
+    vol.Optional("announce_voice"): vol.Any(None, str),
+    vol.Optional("announce_language"): vol.Any(None, str),
+    vol.Optional("announce_lead_seconds"): _as_vol(coerce_lead),
+    vol.Optional("announce_player_leads"): _as_vol(coerce_player_leads),
+    vol.Optional("announce_volume"): _as_vol(coerce_volume),
+    vol.Optional("announce_candle_marks"): _as_vol(lambda v: list(coerce_marks(v))),
+    vol.Optional("announce_shkia_marks"): _as_vol(lambda v: list(coerce_marks(v))),
+    vol.Optional("announce_yt_marks"): _as_vol(lambda v: list(coerce_marks(v))),
+    vol.Optional("announce_shkia_final_min"): vol.All(vol.Coerce(int), vol.Range(min=0, max=180)),
+    vol.Optional("announce_groups"): _as_vol(lambda v: coerce_groups(v, strict=True)),
+    vol.Optional("announce_templates"): _as_vol(lambda v: coerce_templates(v, strict=True)),
 })
 
 
@@ -283,7 +333,7 @@ async def ws_subscribe(hass, connection, msg) -> None:
 @_ready
 async def ws_export(hass, connection, msg) -> None:
     c = _mgr(hass).config
-    settings = {k: v for k, v in c["settings"].items() if k not in ("latitude", "longitude", "notify_service")}
+    settings = {k: v for k, v in c["settings"].items() if k not in EXPORT_SKIP_SETTINGS}
     connection.send_result(msg["id"], {"shabbot_export": 1, "version": VERSION, "settings": settings,
                                        "routines": c["routines"], "rules": c["rules"], "modes": c["modes"],
                                        "devices": c["devices"]})
@@ -437,6 +487,57 @@ async def ws_settings_save(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({
+    vol.Required("type"): "shabbot/announce/test",
+    vol.Optional("message"): vol.Any(None, str),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+@_ready
+async def ws_announce_test(hass, connection, msg) -> None:
+    """Speak one sentence now, so the chosen players and TTS engine can be checked."""
+    m = _mgr(hass)
+    try:
+        await m.announcer.async_speak_test(msg.get("message"))
+    except ServiceValidationError as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    connection.send_result(msg["id"], {"dry_run": bool(m.settings.get("dry_run"))})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "shabbot/announce/upcoming",
+    vol.Optional("settings"): dict,
+})
+@websocket_api.async_response
+@_ready
+async def ws_announce_upcoming(hass, connection, msg) -> None:
+    """The next sentences, at the time they should be heard.
+
+    ``settings`` is an unsaved draft from the panel. Zmanim still come from the
+    saved minhag; only announcement options are overlaid.
+    """
+    m = _mgr(hass)
+    settings = dict(m.settings)
+    if msg.get("settings"):
+        settings.update(SETTINGS_SCHEMA(msg["settings"]))
+    options = options_from_settings(settings)
+    now = m.now()
+    blocks = jcal.blocks_between(
+        now.date() - timedelta(days=3),
+        now.date() + timedelta(days=PLAN_HORIZON_DAYS),
+        m.location,
+        m.minhag,
+    )
+    events = plan_announcements(blocks, m.minhag, options)
+    items = [
+        {"at": event.nominal_at.isoformat(), "kind": event.kind, "message": event.message, "minutes": event.minutes}
+        for event in events
+        if event.nominal_at > now
+    ][:8]
+    connection.send_result(msg["id"], {"enabled": options.enabled, "items": items})
+
+
+@websocket_api.websocket_command({
     vol.Required("type"): "shabbot/assignment/set",
     vol.Required("key"): str,
     vol.Optional("routine_id"): vol.Any(None, str),
@@ -552,7 +653,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
     for handler in (
         ws_config, ws_plan, ws_timeline, ws_preview, ws_status, ws_activity, ws_subscribe, ws_export, ws_routine_check,
         ws_routine_save, ws_routine_delete, ws_rules_save, ws_modes_save, ws_device_save, ws_device_delete,
-        ws_zwave_preset, ws_settings_save, ws_assignment_set, ws_override_start, ws_override_end, ws_resume,
-        ws_import, ws_learn,
+        ws_zwave_preset, ws_settings_save, ws_announce_test, ws_announce_upcoming, ws_assignment_set,
+        ws_override_start,
+        ws_override_end, ws_resume, ws_import, ws_learn,
     ):
         websocket_api.async_register_command(hass, handler)

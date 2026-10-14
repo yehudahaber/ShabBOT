@@ -8,7 +8,8 @@
           "candle_lighting_min": "Candle lighting (minutes before sunset)",
           "havdalah_mode": "Havdalah calculation",
           "havdalah_degrees": "Havdalah: sun degrees below horizon",
-          "havdalah_minutes": "Havdalah: minutes after sunset",
+          "havdalah_minutes": "Shabbat havdalah: minutes after sunset",
+          "yom_tov_end_minutes": "Yom Tov end: minutes after sunset",
           "israel": "Israel (one-day Yom Tov)"
         }
       }
@@ -26,7 +27,8 @@
           "candle_lighting_min": "Candle lighting (minutes before sunset)",
           "havdalah_mode": "Havdalah calculation",
           "havdalah_degrees": "Havdalah: sun degrees below horizon",
-          "havdalah_minutes": "Havdalah: minutes after sunset",
+          "havdalah_minutes": "Shabbat havdalah: minutes after sunset",
+          "yom_tov_end_minutes": "Yom Tov end: minutes after sunset",
           "israel": "Israel (one-day Yom Tov)"
         }
       }
@@ -87,6 +89,13 @@
         "skip": {"name": "Skip", "description": "Turn off to restore the routine."}
       }
     },
-    "reconcile": {"name": "Reconcile now", "description": "Set every managed device to its scheduled state now."}
+    "reconcile": {"name": "Reconcile now", "description": "Set every managed device to its scheduled state now."},
+    "announce": {
+      "name": "Speak an announcement",
+      "description": "Speak one sentence on the announcement players now. In dry run, it is only logged. Leave the message empty for a test sentence.",
+      "fields": {
+        "message": {"name": "Message", "description": "What to say. Empty uses a short test sentence."}
+      }
+    }
   }
 }

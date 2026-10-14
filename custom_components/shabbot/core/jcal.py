@@ -63,6 +63,8 @@ class Minhag:
     havdalah_mode: str = "degrees"  # "degrees" | "minutes"
     havdalah_degrees: float = 8.5
     havdalah_minutes: int = 50
+    # End of a Yom Tov day that is not Shabbat, in minutes after shkia. Shabbat keeps havdalah_*.
+    yom_tov_end_minutes: int = 42
     israel: bool = False
     use_elevation: bool = False
     # Early Shabbat (summer): light at this clock time when the normal candle lighting is later than
@@ -121,10 +123,25 @@ class Zmanim:
 
     @property
     def havdalah(self) -> datetime:
+        """End of Shabbat: the Shabbat havdalah setting. Not used for a weekday Yom Tov."""
         if self.minhag.havdalah_mode == "minutes":
             return _ceil_minute(self.sunset + timedelta(minutes=self.minhag.havdalah_minutes))
         t = astro.sun_below_horizon(self.date, self.loc, self.minhag.havdalah_degrees, evening=True)
         return _ceil_minute(t if t else self.sunset + timedelta(minutes=50))
+
+    @property
+    def yom_tov_end(self) -> datetime:
+        """End of a Yom Tov day that is not Shabbat, a fixed number of minutes after shkia."""
+        return _ceil_minute(self.sunset + timedelta(minutes=self.minhag.yom_tov_end_minutes))
+
+    @property
+    def issur_end(self) -> datetime:
+        """When this day ends, if the next day does not begin at candle lighting.
+
+        Shabbat, including Yom Tov on Shabbat, uses the Shabbat havdalah setting.
+        Any other Yom Tov day uses ``yom_tov_end``.
+        """
+        return self.havdalah if self.date.weekday() == 5 else self.yom_tov_end
 
     @property
     def shaah_zmanit(self) -> timedelta:
@@ -250,26 +267,27 @@ def build_block(days: list[date], loc: astro.Location, minhag: Minhag) -> Block:
     erev = days[0] - timedelta(days=1)
     normal_start = z(erev).candle_lighting
     block_start = _early_shabbat_start(days[0], z(erev), minhag) or normal_start
-    block_end = z(days[-1]).havdalah
+    block_end = z(days[-1]).issur_end
 
     slots: list[Slot] = []
     for i, d in enumerate(days):
         prev = d - timedelta(days=1)
         is_shabbat = d.weekday() == 5
         holiday = yom_tov(d, minhag.israel)
-        # Night begins at candle lighting; except when continuing from a prior Issur day
-        # into Yom Tov (candles are lit after tzeit). Into Shabbat, candles are always pre-sunset.
+        # Night begins at candle lighting. A later night that is not Shabbat begins when the
+        # previous day ends: Shabbat havdalah if that day was Shabbat, otherwise the Yom Tov
+        # end offset. Into Shabbat, candles are always before sunset.
         if i == 0:  # noqa: SIM108 - nested ternary reads worse
             night_start = block_start
         else:
-            night_start = z(prev).candle_lighting if is_shabbat else z(prev).havdalah
+            night_start = z(prev).candle_lighting if is_shabbat else z(prev).issur_end
         day_start = z(d).sunrise
         day_end = block_end if i == len(days) - 1 else (
-            z(d).candle_lighting if days[i + 1].weekday() == 5 else z(d).havdalah
+            z(d).candle_lighting if days[i + 1].weekday() == 5 else z(d).issur_end
         )
         common = dict(day=d, is_shabbat=is_shabbat, holiday=holiday, day_in_block=i + 1, block_id=block_id)
-        # "havdalah" always means the real end of this Shabbat/Yom Tov, and a night's "candle_lighting"
-        # is when candles are actually lit that night (after tzeit on a second Yom Tov night).
+        # "havdalah" always means the real end of this Shabbat/Yom Tov. A night's "candle_lighting"
+        # is when that night begins (after the previous day's end on a later Yom Tov night).
         fixed = {"block_start": block_start, "block_end": block_end, "havdalah": block_end}
         night_fixed = {**fixed, "slot_start": night_start, "slot_end": day_start}
         day_fixed = {**fixed, "slot_start": day_start, "slot_end": day_end}

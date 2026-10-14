@@ -41,3 +41,10 @@ skip_slot:
       selector:
         boolean:
 reconcile:
+announce:
+  fields:
+    message:
+      example: "60 minutes until candle lighting"
+      selector:
+        text:
+          multiline: true

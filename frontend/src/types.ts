@@ -85,6 +85,7 @@ export interface Settings {
   havdalah_mode: "degrees" | "minutes";
   havdalah_degrees: number;
   havdalah_minutes: number;
+  yom_tov_end_minutes: number;
   israel: boolean;
   use_elevation: boolean;
   early_shabbat: boolean;
@@ -99,6 +100,42 @@ export interface Settings {
   storm_window_min: number;
   notify_service: string;
   notify_overrides: boolean;
+  announce_enabled: boolean;
+  announce_players: string[];
+  announce_tts_entity: string;
+  announce_voice: string;
+  announce_language: string;
+  announce_lead_seconds: number;
+  announce_player_leads: Record<string, number>;
+  announce_volume: number | null;
+  announce_candle_marks: number[];
+  announce_shkia_marks: number[];
+  announce_yt_marks: number[];
+  announce_shkia_final_min: number;
+  announce_groups: AnnounceGroups;
+  announce_templates: AnnounceTemplates;
+}
+
+export interface AnnounceGroups {
+  candle: boolean;
+  shkia: boolean;
+  shkia_final: boolean;
+  motzei: boolean;
+  yt_candle: boolean;
+}
+
+export interface AnnounceUpcoming {
+  enabled: boolean;
+  items: { at: string; kind: string; message: string; minutes: number }[];
+}
+
+export interface AnnounceTemplates {
+  candle: string;
+  shkia: string;
+  shkia_final: string;
+  motzei: string;
+  yt_candle: string;
+  yt_candle_now: string;
 }
 
 export interface Config {
