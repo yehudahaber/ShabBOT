@@ -288,7 +288,8 @@ shabbot-panel *::after {
 }
 
 .sb-input,
-.sb-select {
+.sb-select,
+textarea.sb-input {
   width: 100%;
   min-height: 34px;
   padding: 6px 10px;
@@ -299,8 +300,16 @@ shabbot-panel *::after {
   font: inherit;
 }
 
+textarea.sb-input {
+  min-height: 64px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
 .sb-input:focus,
-.sb-select:focus {
+.sb-select:focus,
+textarea.sb-input:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
   border-color: transparent;
