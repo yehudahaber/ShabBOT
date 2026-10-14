@@ -8,7 +8,8 @@
           "candle_lighting_min": "Candle lighting (minutes before sunset)",
           "havdalah_mode": "Havdalah calculation",
           "havdalah_degrees": "Havdalah: sun degrees below horizon",
-          "havdalah_minutes": "Havdalah: minutes after sunset",
+          "havdalah_minutes": "Shabbat havdalah: minutes after sunset",
+          "yom_tov_end_minutes": "Yom Tov end: minutes after sunset",
           "israel": "Israel (one-day Yom Tov)"
         }
       }
@@ -26,7 +27,8 @@
           "candle_lighting_min": "Candle lighting (minutes before sunset)",
           "havdalah_mode": "Havdalah calculation",
           "havdalah_degrees": "Havdalah: sun degrees below horizon",
-          "havdalah_minutes": "Havdalah: minutes after sunset",
+          "havdalah_minutes": "Shabbat havdalah: minutes after sunset",
+          "yom_tov_end_minutes": "Yom Tov end: minutes after sunset",
           "israel": "Israel (one-day Yom Tov)"
         }
       }

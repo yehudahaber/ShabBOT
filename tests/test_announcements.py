@@ -20,6 +20,12 @@ def _plan(day: date, minhag: jcal.Minhag | None = None, **settings):
     return blocks[0], events
 
 
+def _offset(end: datetime, sunset: datetime, minutes: int) -> None:
+    """End is the configured minutes after shkia, rounded up to the next minute."""
+    gap = (end - sunset).total_seconds()
+    assert minutes * 60 <= gap < minutes * 60 + 60, gap
+
+
 def _by(events, kind: str, day: date | None = None, minutes: int | None = None):
     found = [
         e for e in events
@@ -126,15 +132,17 @@ def test_pesach_chain_keeps_issur_until_the_real_end() -> None:
     assert {"candle", "shkia", "shkia_final"} <= first
     assert not any(k.startswith("yt_") for k in first)
 
-    # Friday night of Pesach II: after tzeit, existing flame. No shkia warning, no muttar.
+    # Friday night of Pesach II: Thursday was Yom Tov, not Shabbat, so preparation
+    # begins at the Yom Tov end (42), not the Shabbat havdalah (60). No shkia warning.
     assert nights[1].start > nights[1].anchors["sunset"]
+    _offset(nights[1].start, nights[1].anchors["sunset"], 42)
     second = [e for e in events if e.day == date(2027, 4, 23)]
     assert {e.kind for e in second} == {"yt_candle", "yt_candle_now"}
     now = _by(events, "yt_candle_now", date(2027, 4, 23))
     assert now.nominal_at == nights[1].start
-    assert now.message == "Light candles now from an existing flame."
+    assert now.message == "You can now start preparing for the next meal."
     assert _by(events, "yt_candle", date(2027, 4, 23), 30).message == (
-        "30 minutes until candle lighting. Light from an existing flame."
+        "30 minutes until you can start preparing for the next meal"
     )
 
     # Into Shabbat: candles before shkia again, including the stop-melacha warning.
@@ -143,6 +151,8 @@ def test_pesach_chain_keeps_issur_until_the_real_end() -> None:
     assert {"candle", "shkia_final"} <= third
     assert not any(k.startswith("yt_") for k in third)
 
+    # The block ends on Shabbat, so motzaei keeps the Shabbat offset.
+    _offset(block.end, block.slots[-1].anchors["sunset"], 60)
     motzei = [e for e in events if e.kind == "motzei"]
     assert len(motzei) == 1 and motzei[0].nominal_at == block.end
     assert motzei[0].message == "It's now 60 minutes after shkia and it's muttar to do melacha."
@@ -150,42 +160,54 @@ def test_pesach_chain_keeps_issur_until_the_real_end() -> None:
 
 def test_shabbat_into_rosh_hashana_has_no_muttar_on_saturday_night() -> None:
     # Rosh Hashana 5787 begins on Shabbat 2026-09-12 and continues Sunday.
-    block, events = _plan(date(2026, 9, 12), jcal.Minhag(havdalah_mode="minutes", havdalah_minutes=72))
+    # Saturday night uses Shabbat havdalah (72). Sunday's end uses Yom Tov end (42).
+    minhag = jcal.Minhag(havdalah_mode="minutes", havdalah_minutes=72, yom_tov_end_minutes=42)
+    block, events = _plan(date(2026, 9, 12), minhag)
     assert block.days == [date(2026, 9, 12), date(2026, 9, 13)]
     nights = [s for s in block.slots if s.part is jcal.Part.NIGHT]
     assert nights[1].start > nights[1].anchors["sunset"]
-    assert any(e.kind == "yt_candle" and e.day == date(2026, 9, 13) for e in events)
+    _offset(nights[1].start, nights[1].anchors["sunset"], 72)
+    assert _by(events, "yt_candle_now", date(2026, 9, 13)).nominal_at == nights[1].start
     # Nothing about lighting-before-shkia or stopping melacha after Saturday's sunset.
     assert not any(
         e.kind in ("candle", "shkia", "shkia_final") and e.nominal_at > nights[1].anchors["sunset"]
         for e in events
     )
+    _offset(block.end, block.slots[-1].anchors["sunset"], 42)
     motzei = [e for e in events if e.kind == "motzei"]
     assert len(motzei) == 1
     assert motzei[0].nominal_at == block.end
-    assert motzei[0].message == "It's now 72 minutes after shkia and it's muttar to do melacha."
+    assert motzei[0].message == "It's now 42 minutes after shkia and it's muttar to do melacha."
 
 
 def test_two_day_yom_tov_away_from_shabbat() -> None:
-    minhag = jcal.Minhag(havdalah_mode="minutes", havdalah_minutes=50)
+    minhag = jcal.Minhag(havdalah_mode="minutes", havdalah_minutes=60, yom_tov_end_minutes=42)
     blocks = jcal.blocks_between(date(2026, 1, 1), date(2027, 6, 1), BROOKLYN, minhag)
     block = next(
         b for b in blocks
         if len(b.days) == 2 and all(d.weekday() != 5 for d in b.days)
     )
     events = announcements.plan_announcements([block], minhag, announcements.options_from_settings({}))
+    nights = [s for s in block.slots if s.part is jcal.Part.NIGHT]
+    _offset(nights[1].start, nights[1].anchors["sunset"], 42)
+    _offset(block.end, block.slots[-1].anchors["sunset"], 42)
     assert any(e.kind == "candle" and e.day == block.days[0] for e in events)
     assert any(e.kind == "yt_candle" and e.day == block.days[1] for e in events)
     assert not any(e.kind in ("candle", "shkia", "shkia_final") and e.day == block.days[1] for e in events)
     assert _by(events, "motzei").nominal_at == block.end
-    assert "50 minutes" in _by(events, "motzei").message
+    assert _by(events, "motzei").message == "It's now 42 minutes after shkia and it's muttar to do melacha."
+    plain = next(b for b in blocks if len(b.days) == 1 and b.days[0].weekday() == 5)
+    _offset(plain.end, plain.slots[-1].anchors["sunset"], 60)
 
 
-def test_israel_one_day_pesach_has_no_second_night() -> None:
-    minhag = jcal.Minhag(israel=True, havdalah_mode="minutes", havdalah_minutes=42)
+def test_israel_one_day_pesach_ends_at_the_yom_tov_offset() -> None:
+    """Thursday Pesach in Israel is Yom Tov, not Shabbat, so motzaei uses Yom Tov end."""
+    minhag = jcal.Minhag(israel=True, havdalah_mode="minutes", havdalah_minutes=72, yom_tov_end_minutes=42)
     block, events = _plan(date(2027, 4, 22), minhag)
     assert block.days == [date(2027, 4, 22)]
+    assert block.days[0].weekday() != 5
     assert not any(e.kind.startswith("yt_") for e in events)
+    _offset(block.end, block.slots[-1].anchors["sunset"], 42)
     assert _by(events, "motzei").message == "It's now 42 minutes after shkia and it's muttar to do melacha."
 
 
@@ -297,6 +319,19 @@ def test_existing_flame_uses_its_own_marks_and_toggle() -> None:
     _, off = _plan(date(2027, 4, 22), announce_groups={"yt_candle": False})
     assert not any(e.kind.startswith("yt_") for e in off)
     assert any(e.kind == "candle" for e in off)
+
+
+def test_retired_candle_wording_becomes_the_preparation_sentence() -> None:
+    options = announcements.options_from_settings({
+        "announce_templates": {
+            "yt_candle": "{minutes} {unit} until candle lighting. Light from an existing flame.",
+            "yt_candle_now": "Light candles now from an existing flame.",
+        },
+    })
+    assert options.templates["yt_candle"] == (
+        "{minutes} {unit} until you can start preparing for the next meal"
+    )
+    assert options.templates["yt_candle_now"] == "You can now start preparing for the next meal."
 
 
 def test_missing_group_flags_stay_on() -> None:

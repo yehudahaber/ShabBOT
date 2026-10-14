@@ -91,6 +91,7 @@ export interface Settings {
   havdalah_mode: "degrees" | "minutes";
   havdalah_degrees: number;
   havdalah_minutes: number;
+  yom_tov_end_minutes: number;
   israel: boolean;
   use_elevation: boolean;
   early_shabbat: boolean;

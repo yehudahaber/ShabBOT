@@ -18,25 +18,27 @@ a later Yom Tov night starts at the previous day's havdalah, after tzeit):
   (default: one minute before shkia). A shkia mark that would land before
   candles are lit is skipped: that stretch is the candle countdown's job.
 
-* **Existing flame** — the slot starts after sunset. This is a second (or
-  later) Yom Tov night that is not Shabbat. Candles are lit after tzeit from
-  a flame that is already burning, and melacha is already forbidden, so there
-  is no shkia countdown and no "stop all melacha". Its own minute marks count
-  down to that lighting time, and one announcement fires at the lighting time
-  itself.
+* **Next-meal preparation** — the slot starts after sunset. This is a second
+  (or later) Yom Tov night that is not Shabbat. The previous day has ended, so
+  melacha needed for the next meal may begin. There is no shkia countdown and
+  no "stop all melacha". Its own minute marks count down to that moment, and
+  one announcement fires when preparation may begin. The moment is the previous
+  day's end: Shabbat havdalah if that day was Shabbat, otherwise the Yom Tov
+  end offset.
 
 Each group (candle countdown, shkia countdown, the final warning, motzaei,
-and existing-flame lighting) can be switched off on its own. A missing group
+and next-meal preparation) can be switched off on its own. A missing group
 flag stays on, so settings saved before the switches existed keep speaking.
 
 Motzaei
 -------
-"Muttar" is spoken once, at ``block.end`` (the configured havdalah). It is not
-spoken on an evening that is still inside the block, so a Yom Tov that runs
-into Shabbat, or a two-day Yom Tov, never says melacha is permitted while it
-is still forbidden. In minutes mode the sentence uses the configured havdalah
-minutes (42, 60, 72, …). In degrees mode it uses the rounded number of minutes
-between that day's shkia and havdalah, so the number matches the clock.
+"Muttar" is spoken once, at ``block.end``. It is not spoken on an evening that
+is still inside the block, so a Yom Tov that runs into Shabbat, or a two-day
+Yom Tov, never says melacha is permitted while it is still forbidden. The
+number in the sentence is the offset that day actually used. Shabbat uses the
+Shabbat havdalah setting (the configured minutes, or the rounded sun-angle
+gap). A block that ends on a Yom Tov which is not Shabbat uses the Yom Tov
+end setting.
 
 Latency
 -------
@@ -72,6 +74,11 @@ DEFAULT_TEMPLATES: dict[str, str] = {
     "shkia": "{minutes} {unit} until shkia",
     "shkia_final": "Shkia in {minutes_words}. Stop all melacha.",
     "motzei": "It's now {minutes} {unit} after shkia and it's muttar to do melacha.",
+    "yt_candle": "{minutes} {unit} until you can start preparing for the next meal",
+    "yt_candle_now": "You can now start preparing for the next meal.",
+}
+# Sentences from the first draft of this branch. Treated as unset so the preparation wording takes over.
+_RETIRED_TEMPLATES = {
     "yt_candle": "{minutes} {unit} until candle lighting. Light from an existing flame.",
     "yt_candle_now": "Light candles now from an existing flame.",
 }
@@ -79,7 +86,7 @@ DEFAULT_CANDLE_MARKS = (60, 30, 15, 5)
 DEFAULT_SHKIA_MARKS = (60, 30, 15, 5)
 DEFAULT_YT_MARKS = (60, 30, 15, 5)
 
-# Panel switches. yt_candle also covers the sentence spoken at lighting time.
+# Panel switches. yt_candle also covers the sentence spoken when preparation may begin.
 GROUP_KEYS = (CANDLE, SHKIA, SHKIA_FINAL, MOTZEI, YT_CANDLE)
 
 # Merged into the integration settings. Nested values are replaced wholesale on save.
@@ -246,7 +253,7 @@ def coerce_templates(value: Any, *, strict: bool = False) -> dict[str, str]:
             raise ValueError(f"Template {key} must be text")
         if len(text) > 400:
             raise ValueError(f"Template {key} is too long")
-        merged[key] = text
+        merged[key] = DEFAULT_TEMPLATES[key] if text == _RETIRED_TEMPLATES.get(key) else text
     return merged
 
 
@@ -374,7 +381,10 @@ def _message(kind: str, templates: dict[str, str], fields: dict[str, Any]) -> st
 
 
 def havdalah_minutes_spoken(block: jcal.Block, minhag: jcal.Minhag) -> int:
-    """The number of minutes the motzaei sentence should say."""
+    """The number of minutes the motzaei sentence should say for this block's end."""
+    last = block.days[-1]
+    if last.weekday() != 5:
+        return int(minhag.yom_tov_end_minutes)
     if minhag.havdalah_mode == "minutes":
         return int(minhag.havdalah_minutes)
     shkia = block.slots[-1].anchors["sunset"]
@@ -420,7 +430,7 @@ def plan_announcements(
             candle = slot.start
             occasion = _occasion(slot.is_shabbat, slot.holiday)
             groups = options.groups
-            # After sunset: candles from an existing flame, issur already in effect.
+            # After sunset: the previous day has ended, so preparation for the next meal may begin.
             if candle > sunset:
                 if groups.get(YT_CANDLE, True):
                     for minutes in options.yt_marks:

@@ -16,8 +16,8 @@ const TEMPLATES: { key: keyof AnnounceTemplates; label: string }[] = [
   { key: "shkia", label: "Shkia countdown" },
   { key: "shkia_final", label: "Final warning" },
   { key: "motzei", label: "Motzaei" },
-  { key: "yt_candle", label: "Existing flame, countdown" },
-  { key: "yt_candle_now", label: "Existing flame, at lighting time" },
+  { key: "yt_candle", label: "Next-meal preparation, countdown" },
+  { key: "yt_candle_now", label: "Next-meal preparation, when it begins" },
 ];
 
 const DEFAULT_GROUPS: AnnounceGroups = {
@@ -53,9 +53,10 @@ function shkiaPhrase(marks: number[]): string {
   return marks.length ? `${base} Marks before candle lighting are skipped.` : base;
 }
 
-function ytPhrase(marks: number[]): string {
-  if (marks.length === 0) return marksPhrase(marks, "lighting");
-  return `${marksPhrase(marks, "lighting")} Then once when it is time to light.`;
+function preparePhrase(marks: number[]): string {
+  const sorted = [...marks].sort((a, b) => b - a);
+  if (sorted.length === 0) return "Add a minute mark to announce before you can start preparing.";
+  return `Will announce at ${sorted.join(", ")} min before you can start preparing. Then once when preparation may begin.`;
 }
 
 function samePlayers(a: [string, string][], b: [string, string][]): boolean {
@@ -115,7 +116,8 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
     }
   };
 
-  const motzeiMinutes = draft.havdalah_mode === "minutes" ? draft.havdalah_minutes : null;
+  const shabbatEnd = draft.havdalah_mode === "minutes" ? `${draft.havdalah_minutes} min after shkia` : "the sun-angle havdalah";
+  const yomTovEnd = draft.yom_tov_end_minutes ?? 42;
 
   return (
     <div className="sb-card sb-card-pad sb-stack">
@@ -162,14 +164,13 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
         </Group>
         <Group title="Motzaei “muttar”" on={groups.motzei} onToggle={(v) => setGroup("motzei", v)}>
           <p className="sb-hint">
-            {motzeiMinutes == null
-              ? "Spoken at havdalah, using that day’s minutes between shkia and havdalah."
-              : `Spoken at havdalah (${motzeiMinutes} minutes after shkia). ${sentencePreview(templates.motzei, motzeiMinutes)}`}
+            Spoken when the block ends. Shabbat uses {shabbatEnd}. A Yom Tov that is not Shabbat uses Yom Tov end ({yomTovEnd} min). {sentencePreview(templates.motzei, draft.havdalah_mode === "minutes" ? draft.havdalah_minutes : yomTovEnd)}
           </p>
         </Group>
-        <Group title="Existing-flame lighting" on={groups.yt_candle} onToggle={(v) => setGroup("yt_candle", v)}>
+        <Group title="Next-meal preparation" on={groups.yt_candle} onToggle={(v) => setGroup("yt_candle", v)}>
           <MinuteChips value={draft.announce_yt_marks ?? [60, 30, 15, 5]} onChange={(v) => set("announce_yt_marks", v)}
-            phrase={ytPhrase(draft.announce_yt_marks ?? [60, 30, 15, 5])} />
+            phrase={preparePhrase(draft.announce_yt_marks ?? [60, 30, 15, 5])} />
+          <p className="sb-hint">A later Yom Tov night. After Shabbat this is Shabbat havdalah; after a Yom Tov day it is Yom Tov end.</p>
         </Group>
       </div>
 

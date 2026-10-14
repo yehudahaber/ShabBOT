@@ -6,6 +6,34 @@ import { Check, Field, Loading, SaveBar } from "../components/ui";
 import { AnnouncementsCard } from "./AnnouncementsCard";
 import type { Settings } from "../types";
 
+const YOM_TOV_END_PRESETS = [42, 50, 60, 72];
+
+function YomTovEndField({ value, onChange }: { value: number; onChange: (minutes: number) => void }) {
+  const [custom, setCustom] = useState(!YOM_TOV_END_PRESETS.includes(value));
+  const selected = custom || !YOM_TOV_END_PRESETS.includes(value) ? "custom" : String(value);
+  return (
+    <div className="sb-field">
+      <span>Yom Tov end</span>
+      <select className="sb-select" value={selected} aria-label="Yom Tov end"
+        onChange={(e) => {
+          if (e.target.value === "custom") setCustom(true);
+          else {
+            setCustom(false);
+            onChange(Number(e.target.value));
+          }
+        }}>
+        {YOM_TOV_END_PRESETS.map((n) => <option key={n} value={n}>{n} minutes</option>)}
+        <option value="custom">Custom</option>
+      </select>
+      {selected === "custom" && (
+        <input className="sb-input" type="number" min={20} max={90} value={value} aria-label="Custom Yom Tov end minutes"
+          onChange={(e) => onChange(e.target.value === "" ? value : Math.min(90, Math.max(20, Math.trunc(Number(e.target.value)) || value)))} />
+      )}
+      <small className="sb-hint">Minutes after shkia when a Yom Tov day that is not Shabbat ends. 20–90.</small>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { data } = useConfig();
   const [draft, setDraft, dirty, reset] = useDraft<Settings>(data?.config.settings);
@@ -61,21 +89,22 @@ export function SettingsPage() {
           <Field label="Candle lighting (minutes before sunset)">
             <input className="sb-input" type="number" min={0} max={60} value={draft.candle_lighting_min} onChange={num("candle_lighting_min")} />
           </Field>
-          <Field label="Havdalah">
+          <Field label="Shabbat havdalah">
             <select className="sb-select" value={draft.havdalah_mode} onChange={(e) => set("havdalah_mode", e.target.value as Settings["havdalah_mode"])}>
               <option value="degrees">Sun angle below horizon</option>
               <option value="minutes">Fixed minutes after sunset</option>
             </select>
           </Field>
           {draft.havdalah_mode === "degrees" ? (
-            <Field label="Degrees below horizon" hint="8.5° is the common default; 7.083° is earlier.">
+            <Field label="Degrees below horizon" hint="8.5° is the common default; 7.083° is earlier. Shabbat only.">
               <input className="sb-input" type="number" step={0.001} value={draft.havdalah_degrees} onChange={num("havdalah_degrees")} />
             </Field>
           ) : (
-            <Field label="Minutes after sunset" hint="e.g. 42, 50 or 72">
-              <input className="sb-input" type="number" value={draft.havdalah_minutes} onChange={num("havdalah_minutes")} />
+            <Field label="Shabbat minutes after shkia" hint="Including Yom Tov that falls on Shabbat.">
+              <input className="sb-input" type="number" min={20} max={90} value={draft.havdalah_minutes} onChange={num("havdalah_minutes")} />
             </Field>
           )}
+          <YomTovEndField value={draft.yom_tov_end_minutes ?? 42} onChange={(v) => set("yom_tov_end_minutes", v)} />
         </div>
         <div className="sb-row" style={{ gap: 20 }}>
           <Check checked={draft.israel} onChange={(v) => set("israel", v)}>Israel (one-day Yom Tov)</Check>

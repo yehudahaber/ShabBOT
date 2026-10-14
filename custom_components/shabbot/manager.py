@@ -125,6 +125,7 @@ class ShabbotManager:
             havdalah_mode=s["havdalah_mode"],
             havdalah_degrees=float(s["havdalah_degrees"]),
             havdalah_minutes=int(s["havdalah_minutes"]),
+            yom_tov_end_minutes=int(s.get("yom_tov_end_minutes", 42)),
             israel=bool(s["israel"]),
             use_elevation=bool(s["use_elevation"]),
             early_shabbat_time=_hhmm(s.get("early_shabbat_time")) if s.get("early_shabbat") else None,
