@@ -210,7 +210,7 @@ def test_havdalah_and_candle_lighting_in_meal_routines() -> None:
     for slot in (night1, day1, night2):
         assert slot.anchors["havdalah"] == block.end  # always the real end of this Yom Tov/Shabbat
     assert night1.anchors["candle_lighting"] == block.start
-    assert night2.anchors["candle_lighting"] == night2.start  # 2nd night: lit after tzeit
+    assert night2.anchors["candle_lighting"] == night2.start  # 2nd night: after the previous day's Yom Tov end
     assert night2.anchors["candle_lighting"] > night2.anchors["sunset"]
 
 

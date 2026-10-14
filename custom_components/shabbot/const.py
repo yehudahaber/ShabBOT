@@ -31,6 +31,7 @@ DEFAULT_SETTINGS: Final = {
     "havdalah_mode": "degrees",
     "havdalah_degrees": 8.5,
     "havdalah_minutes": 50,
+    "yom_tov_end_minutes": 42,
     "israel": False,
     "use_elevation": False,
     "early_shabbat": False,  # summer: accept Shabbat at a fixed time when candle lighting is late

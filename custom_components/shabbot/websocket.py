@@ -156,6 +156,7 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("havdalah_mode"): vol.In(["degrees", "minutes"]),
     vol.Optional("havdalah_degrees"): vol.All(vol.Coerce(float), vol.Range(min=5, max=20)),
     vol.Optional("havdalah_minutes"): vol.All(vol.Coerce(int), vol.Range(min=20, max=90)),
+    vol.Optional("yom_tov_end_minutes"): vol.All(vol.Coerce(int), vol.Range(min=20, max=90)),
     vol.Optional("israel"): bool,
     vol.Optional("use_elevation"): bool,
     vol.Optional("early_shabbat"): bool,

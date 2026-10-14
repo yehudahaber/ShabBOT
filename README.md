@@ -62,20 +62,20 @@ Available zmanim: `alot`, `sunrise`, `chatzot`, `mincha_gedola`, `plag`, `candle
 
 ## Announcements
 
-Settings → Announcements speaks a short sentence on the media players you pick, using a TTS engine and an optional voice. It starts off. Each announcement (candle countdown, shkia countdown, the final warning, motzaei, and existing-flame lighting) has its own switch. **Dry run** logs the sentence on the Activity tab instead of speaking. `shabbot.announce` (or **Speak a test** in the panel) says one sentence immediately. The panel lists the next few times so you can check the schedule before it runs.
+Settings → Announcements speaks a short sentence on the media players you pick, using a TTS engine and an optional voice. It starts off. Each announcement (candle countdown, shkia countdown, the final warning, motzaei, and next-meal preparation) has its own switch. **Dry run** logs the sentence on the Activity tab instead of speaking. `shabbot.announce` (or **Speak a test** in the panel) says one sentence immediately. The panel lists the next few times so you can check the schedule before it runs.
 
 | When | Default |
 |---|---|
 | Before candle lighting | 60, 30, 15 and 5 minutes: "60 minutes until candle lighting" |
 | After candle lighting, before shkia | the same marks, but only the ones that fall after candles are lit, then a final warning 1 minute before shkia: "Shkia in one minute. Stop all melacha." |
-| Havdalah | "It's now 60 minutes after shkia and it's muttar to do melacha." The number is your havdalah setting (42, 60, 72, …). In sun-angle mode it is the real minutes between that day's shkia and havdalah. |
+| Havdalah | "It's now 60 minutes after shkia and it's muttar to do melacha." On Shabbat the number is the Shabbat havdalah setting (or the real sun-angle gap). On a Yom Tov that is not Shabbat it is the Yom Tov end setting. |
 
 **Yom Tov sequences.** "Muttar" is said only when issur melacha actually ends (the end of the whole Shabbat/Yom Tov block), never on a night that is still inside it.
 
 - **First night** of Shabbat or Yom Tov, including an early Shabbat: countdown to candle lighting, then countdown to shkia. Early Shabbat moves the candle countdown to the early time; the shkia warning stays on the real sunset.
 - **Yom Tov into Shabbat** (for example Friday night of a Yom Tov that continues into Shabbat): candles are lit before shkia, so the ordinary candle and shkia warnings run. There is no "muttar" that afternoon.
-- **Second Yom Tov night that is not Shabbat**: candles are lit after tzeit from a flame that is already burning, and melacha is already forbidden. There is no shkia countdown and no "stop all melacha". Its own minute marks (60, 30, 15 and 5 by default) count down to that lighting time ("30 minutes until candle lighting. Light from an existing flame.") and one sentence fires when it is time to light. Turning off the candle-lighting countdown does not turn this off.
-- **Shabbat into Yom Tov** (for example Rosh Hashana starting on Shabbat): Saturday night is an existing-flame lighting, not havdalah.
+- **Second Yom Tov night that is not Shabbat**: the previous day has ended, so you may start preparing for the next meal. There is no shkia countdown and no "stop all melacha". Its own minute marks (60, 30, 15 and 5 by default) count down to that time ("30 minutes until you can start preparing for the next meal") and one sentence fires when preparation may begin. Turning off the candle-lighting countdown does not turn this off. After a Shabbat, the time is Shabbat havdalah. After a Yom Tov day, it is the Yom Tov end setting (default 42 minutes after shkia; 42, 50, 60, 72, or a custom value). That setting is global: device schedules use the same end.
+- **Shabbat into Yom Tov** (for example Rosh Hashana starting on Shabbat): Saturday night is next-meal preparation at Shabbat havdalah, not a second candle lighting. The block then ends on Yom Tov, so motzaei uses the Yom Tov end offset.
 
 **Lead.** A global offset in seconds, with an optional per-player override, fires the trigger that early so TTS generation and speaker buffering (Sonos is often several seconds) land on the nominal time. `0` means exactly on time. A moment that was missed while Home Assistant was down is not spoken late.
 

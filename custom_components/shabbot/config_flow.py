@@ -11,7 +11,10 @@ import voluptuous as vol
 
 from .const import DEFAULT_SETTINGS, DOMAIN, NAME
 
-MINHAG_KEYS = ("candle_lighting_min", "havdalah_mode", "havdalah_degrees", "havdalah_minutes", "israel")
+MINHAG_KEYS = (
+    "candle_lighting_min", "havdalah_mode", "havdalah_degrees", "havdalah_minutes",
+    "yom_tov_end_minutes", "israel",
+)
 
 
 def _schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -27,13 +30,16 @@ def _schema(defaults: dict[str, Any]) -> vol.Schema:
         vol.Required("havdalah_minutes", default=defaults["havdalah_minutes"]): selector.NumberSelector(
             selector.NumberSelectorConfig(min=20, max=90, step=1, unit_of_measurement="min",
                                           mode=selector.NumberSelectorMode.BOX)),
+        vol.Required("yom_tov_end_minutes", default=defaults.get("yom_tov_end_minutes", 42)): selector.NumberSelector(
+            selector.NumberSelectorConfig(min=20, max=90, step=1, unit_of_measurement="min",
+                                          mode=selector.NumberSelectorMode.BOX)),
         vol.Required("israel", default=defaults["israel"]): selector.BooleanSelector(),
     })
 
 
 def _clean(user_input: dict[str, Any]) -> dict[str, Any]:
     out = dict(user_input)
-    for key in ("candle_lighting_min", "havdalah_minutes"):
+    for key in ("candle_lighting_min", "havdalah_minutes", "yom_tov_end_minutes"):
         out[key] = int(out[key])
     out["havdalah_degrees"] = float(out["havdalah_degrees"])
     return out
