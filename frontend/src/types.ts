@@ -109,8 +109,23 @@ export interface Settings {
   announce_volume: number | null;
   announce_candle_marks: number[];
   announce_shkia_marks: number[];
+  announce_yt_marks: number[];
   announce_shkia_final_min: number;
+  announce_groups: AnnounceGroups;
   announce_templates: AnnounceTemplates;
+}
+
+export interface AnnounceGroups {
+  candle: boolean;
+  shkia: boolean;
+  shkia_final: boolean;
+  motzei: boolean;
+  yt_candle: boolean;
+}
+
+export interface AnnounceUpcoming {
+  enabled: boolean;
+  items: { at: string; kind: string; message: string; minutes: number }[];
 }
 
 export interface AnnounceTemplates {

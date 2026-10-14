@@ -261,3 +261,63 @@ def test_lead_crosses_the_fall_back_fold() -> None:
     assert (fire.hour, fire.minute) == (1, 0)
     assert fire.utcoffset() == timedelta(hours=-5)
     assert (nominal.timestamp() - fire.timestamp()) == 90 * 60
+
+
+# ---------------------------------------------------------------- group switches
+
+
+def test_turning_a_group_off_omits_only_that_group() -> None:
+    _, events = _plan(date(2026, 10, 10), announce_groups={"candle": False, "motzei": False})
+    kinds = {e.kind for e in events}
+    assert "candle" not in kinds
+    assert "motzei" not in kinds
+    assert {"shkia", "shkia_final"} <= kinds
+
+
+def test_shkia_mark_speaks_when_the_final_warning_is_off() -> None:
+    _, events = _plan(
+        date(2026, 10, 10),
+        announce_shkia_marks=[15, 5, 1],
+        announce_shkia_final_min=1,
+        announce_groups={"shkia_final": False},
+    )
+    assert not any(e.kind == "shkia_final" for e in events)
+    assert _by(events, "shkia", minutes=1).nominal_at is not None
+
+
+def test_existing_flame_uses_its_own_marks_and_toggle() -> None:
+    _, events = _plan(
+        date(2027, 4, 22),
+        announce_candle_marks=[10],
+        announce_yt_marks=[20, 5],
+    )
+    assert [e.minutes for e in events if e.day == date(2027, 4, 23) and e.kind == "yt_candle"] == [20, 5]
+    assert [e.minutes for e in events if e.day == date(2027, 4, 22) and e.kind == "candle"] == [10]
+
+    _, off = _plan(date(2027, 4, 22), announce_groups={"yt_candle": False})
+    assert not any(e.kind.startswith("yt_") for e in off)
+    assert any(e.kind == "candle" for e in off)
+
+
+def test_missing_group_flags_stay_on() -> None:
+    options = announcements.options_from_settings({})
+    assert options.groups == {
+        "candle": True, "shkia": True, "shkia_final": True, "motzei": True, "yt_candle": True,
+    }
+    assert options.yt_marks == (60, 30, 15, 5)
+
+
+def test_settings_schema_accepts_group_toggles_and_sorts_marks() -> None:
+    import voluptuous as vol
+
+    from custom_components.shabbot.websocket import SETTINGS_SCHEMA
+
+    out = SETTINGS_SCHEMA({
+        "announce_groups": {"candle": False},
+        "announce_yt_marks": [5, 60, 5],
+    })
+    assert out["announce_groups"]["candle"] is False
+    assert out["announce_groups"]["shkia"] is True
+    assert out["announce_yt_marks"] == [60, 5]
+    with pytest.raises(vol.Invalid):
+        SETTINGS_SCHEMA({"announce_groups": {"nope": True}})

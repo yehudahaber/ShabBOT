@@ -62,7 +62,7 @@ Available zmanim: `alot`, `sunrise`, `chatzot`, `mincha_gedola`, `plag`, `candle
 
 ## Announcements
 
-Settings → Announcements speaks a short sentence on the media players you pick, using a TTS engine and an optional voice. It starts off. **Dry run** logs the sentence on the Activity tab instead of speaking. `shabbot.announce` (or **Speak a test** in the panel) says one sentence immediately.
+Settings → Announcements speaks a short sentence on the media players you pick, using a TTS engine and an optional voice. It starts off. Each announcement (candle countdown, shkia countdown, the final warning, motzaei, and existing-flame lighting) has its own switch. **Dry run** logs the sentence on the Activity tab instead of speaking. `shabbot.announce` (or **Speak a test** in the panel) says one sentence immediately. The panel lists the next few times so you can check the schedule before it runs.
 
 | When | Default |
 |---|---|
@@ -74,7 +74,7 @@ Settings → Announcements speaks a short sentence on the media players you pick
 
 - **First night** of Shabbat or Yom Tov, including an early Shabbat: countdown to candle lighting, then countdown to shkia. Early Shabbat moves the candle countdown to the early time; the shkia warning stays on the real sunset.
 - **Yom Tov into Shabbat** (for example Friday night of a Yom Tov that continues into Shabbat): candles are lit before shkia, so the ordinary candle and shkia warnings run. There is no "muttar" that afternoon.
-- **Second Yom Tov night that is not Shabbat**: candles are lit after tzeit from a flame that is already burning, and melacha is already forbidden. There is no shkia countdown and no "stop all melacha". The same minute marks count down to that lighting time ("30 minutes until candle lighting. Light from an existing flame.") and one sentence fires when it is time to light.
+- **Second Yom Tov night that is not Shabbat**: candles are lit after tzeit from a flame that is already burning, and melacha is already forbidden. There is no shkia countdown and no "stop all melacha". Its own minute marks (60, 30, 15 and 5 by default) count down to that lighting time ("30 minutes until candle lighting. Light from an existing flame.") and one sentence fires when it is time to light. Turning off the candle-lighting countdown does not turn this off.
 - **Shabbat into Yom Tov** (for example Rosh Hashana starting on Shabbat): Saturday night is an existing-flame lighting, not havdalah.
 
 **Lead.** A global offset in seconds, with an optional per-player override, fires the trigger that early so TTS generation and speaker buffering (Sonos is often several seconds) land on the nominal time. `0` means exactly on time. A moment that was missed while Home Assistant was down is not spoken late.
