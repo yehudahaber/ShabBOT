@@ -13,6 +13,7 @@ const KIND: Record<string, { label: string; cls: string }> = {
   storm: { label: "Gave up", cls: "sb-badge-danger" },
   error: { label: "Error", cls: "sb-badge-danger" },
   settings: { label: "Settings", cls: "" },
+  announce: { label: "Spoken", cls: "sb-badge-candle" },
 };
 
 type Filter = "all" | "changes" | "overrides" | "problems";

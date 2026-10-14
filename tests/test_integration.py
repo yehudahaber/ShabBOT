@@ -104,6 +104,28 @@ async def test_executor_follows_schedule(hass: HomeAssistant, manager: ShabbotMa
     assert _state(hass, "chandelier") == "off"  # baseline takes over again
 
 
+async def test_announcement_dry_run_logs_at_the_lead_adjusted_time(
+        hass: HomeAssistant, manager: ShabbotManager, freezer: FrozenDateTimeFactory) -> None:
+    block, _sunset = _block_times(manager)
+    manager.settings.update({
+        "announce_enabled": True,
+        "announce_players": ["media_player.kitchen"],
+        "announce_tts_entity": "tts.google_en_com",
+        "announce_lead_seconds": 20,
+        "dry_run": True,
+    })
+    manager.config_changed(reconcile=False)
+    await hass.async_block_till_done()
+    nominal = block.start - timedelta(minutes=60)
+    fire = nominal - timedelta(seconds=20)
+    await _advance(hass, freezer, fire - timedelta(seconds=5))
+    assert not any(e["kind"] == "announce" for e in manager.store.activity)
+    await _advance(hass, freezer, fire + timedelta(seconds=1))
+    logged = [e for e in manager.store.activity if e["kind"] == "announce"]
+    assert logged and logged[-1]["message"] == "Dry run: 60 minutes until candle lighting"
+    assert logged[-1]["entity_id"] == "media_player.kitchen"
+
+
 async def test_dry_run_changes_nothing(hass: HomeAssistant, manager: ShabbotManager,
                                        freezer: FrozenDateTimeFactory) -> None:
     manager.settings["dry_run"] = True

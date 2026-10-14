@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant, ServiceCall, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
@@ -61,6 +61,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
     async def reconcile(call: ServiceCall) -> None:
         await _mgr(hass).async_reconcile("service call")
 
+    async def announce(call: ServiceCall) -> None:
+        try:
+            await _mgr(hass).announcer.async_speak_test(call.data.get("message"))
+        except ServiceValidationError as err:
+            raise HomeAssistantError(str(err)) from err
+
     slot = vol.Match(r"^\d{4}-\d{2}-\d{2}/(night|day|block)$")
     hass.services.async_register(DOMAIN, "start_override", start_override, vol.Schema({
         vol.Required("entity_id"): cv.entity_ids,
@@ -73,3 +79,6 @@ def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "skip_slot", skip_slot, vol.Schema({
         vol.Required("slot"): slot, vol.Optional("skip", default=True): cv.boolean}))
     hass.services.async_register(DOMAIN, "reconcile", reconcile, vol.Schema({}))
+    hass.services.async_register(DOMAIN, "announce", announce, vol.Schema({
+        vol.Optional("message"): cv.string,
+    }))

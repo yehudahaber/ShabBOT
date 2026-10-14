@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from .core.announcements import ANNOUNCE_DEFAULTS
+
 DOMAIN: Final = "shabbot"
 NAME: Final = "ShabBOT"
 VERSION: Final = "0.2.2"
@@ -43,7 +45,18 @@ DEFAULT_SETTINGS: Final = {
     "storm_window_min": 10,
     "notify_service": "",
     "notify_overrides": True,
+    **ANNOUNCE_DEFAULTS,
 }
+
+# Home-specific values. Export/import copies minhag and templates, not another house's devices.
+EXPORT_SKIP_SETTINGS: Final = (
+    "latitude",
+    "longitude",
+    "notify_service",
+    "announce_players",
+    "announce_tts_entity",
+    "announce_player_leads",
+)
 
 DEFAULT_DEVICE: Final = {
     "protect": True,

@@ -21,6 +21,7 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.util import dt as dt_util
 
+from .announcer import Announcer
 from .const import PLAN_HORIZON_DAYS, POLL_SECONDS, SIGNAL_ACTIVITY, SIGNAL_UPDATE
 from .core import astro, gestures, jcal, planner
 from .store import ShabbotStore, device_config
@@ -94,6 +95,7 @@ class ShabbotManager:
         self._boundary_unsub: CALLBACK_TYPE | None = None
         self._block_unsub: CALLBACK_TYPE | None = None
         self._next_boundary: datetime | None = None
+        self.announcer = Announcer(self)
 
     # ------------------------------------------------------------ config accessors
 
@@ -148,6 +150,7 @@ class ShabbotManager:
             if unsub:
                 unsub()
         self._unsubs.clear()
+        await self.announcer.async_stop()
         await self.store.async_flush()
 
     @callback
@@ -176,6 +179,7 @@ class ShabbotManager:
         self._subscribe_events()
         self._schedule_next_boundary()
         self._schedule_block_change()
+        self.announcer.reschedule()
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
 
     def managed_entities(self) -> list[str]:
