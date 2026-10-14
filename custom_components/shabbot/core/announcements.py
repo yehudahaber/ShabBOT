@@ -21,9 +21,13 @@ a later Yom Tov night starts at the previous day's havdalah, after tzeit):
 * **Existing flame** — the slot starts after sunset. This is a second (or
   later) Yom Tov night that is not Shabbat. Candles are lit after tzeit from
   a flame that is already burning, and melacha is already forbidden, so there
-  is no shkia countdown and no "stop all melacha". The same minute marks count
-  down to that lighting time with a different template, and one announcement
-  fires at the lighting time itself.
+  is no shkia countdown and no "stop all melacha". Its own minute marks count
+  down to that lighting time, and one announcement fires at the lighting time
+  itself.
+
+Each group (candle countdown, shkia countdown, the final warning, motzaei,
+and existing-flame lighting) can be switched off on its own. A missing group
+flag stays on, so settings saved before the switches existed keep speaking.
 
 Motzaei
 -------
@@ -73,6 +77,10 @@ DEFAULT_TEMPLATES: dict[str, str] = {
 }
 DEFAULT_CANDLE_MARKS = (60, 30, 15, 5)
 DEFAULT_SHKIA_MARKS = (60, 30, 15, 5)
+DEFAULT_YT_MARKS = (60, 30, 15, 5)
+
+# Panel switches. yt_candle also covers the sentence spoken at lighting time.
+GROUP_KEYS = (CANDLE, SHKIA, SHKIA_FINAL, MOTZEI, YT_CANDLE)
 
 # Merged into the integration settings. Nested values are replaced wholesale on save.
 ANNOUNCE_DEFAULTS: dict[str, Any] = {
@@ -86,7 +94,9 @@ ANNOUNCE_DEFAULTS: dict[str, Any] = {
     "announce_volume": None,
     "announce_candle_marks": list(DEFAULT_CANDLE_MARKS),
     "announce_shkia_marks": list(DEFAULT_SHKIA_MARKS),
+    "announce_yt_marks": list(DEFAULT_YT_MARKS),
     "announce_shkia_final_min": 1,
+    "announce_groups": {key: True for key in GROUP_KEYS},
     "announce_templates": dict(DEFAULT_TEMPLATES),
 }
 
@@ -201,6 +211,25 @@ def coerce_player_leads(value: Any) -> dict[str, int]:
     return leads
 
 
+def coerce_groups(value: Any, *, strict: bool = False) -> dict[str, bool]:
+    """On/off for each announcement group. Missing keys stay on."""
+    merged = {key: True for key in GROUP_KEYS}
+    if value in (None, {}):
+        return merged
+    if not isinstance(value, dict):
+        raise ValueError("Announcement groups must be a mapping")
+    for key, flag in value.items():
+        if key not in merged:
+            if strict:
+                raise ValueError(f"Unknown announcement group {key}")
+            continue
+        if isinstance(flag, bool):
+            merged[key] = flag
+        elif strict:
+            raise ValueError(f"Announcement group {key} must be on or off")
+    return merged
+
+
 def coerce_templates(value: Any, *, strict: bool = False) -> dict[str, str]:
     """Merge over the defaults. A blank template disables that announcement."""
     merged = dict(DEFAULT_TEMPLATES)
@@ -244,7 +273,9 @@ class AnnounceOptions:
     volume: int | None
     candle_marks: tuple[int, ...]
     shkia_marks: tuple[int, ...]
+    yt_marks: tuple[int, ...]
     shkia_final_min: int
+    groups: dict[str, bool]
     templates: dict[str, str]
 
 
@@ -277,6 +308,10 @@ def options_from_settings(settings: dict[str, Any] | None) -> AnnounceOptions:
         templates = coerce_templates(s.get("announce_templates"))
     except ValueError:
         templates = dict(DEFAULT_TEMPLATES)
+    try:
+        groups = coerce_groups(s.get("announce_groups"))
+    except ValueError:
+        groups = {key: True for key in GROUP_KEYS}
     return AnnounceOptions(
         enabled=bool(s.get("announce_enabled")),
         players=players,
@@ -288,7 +323,9 @@ def options_from_settings(settings: dict[str, Any] | None) -> AnnounceOptions:
         volume=volume,
         candle_marks=_marks_or_default(s.get("announce_candle_marks"), DEFAULT_CANDLE_MARKS),
         shkia_marks=_marks_or_default(s.get("announce_shkia_marks"), DEFAULT_SHKIA_MARKS),
+        yt_marks=_marks_or_default(s.get("announce_yt_marks"), DEFAULT_YT_MARKS),
         shkia_final_min=final_min,
+        groups=groups,
         templates=templates,
     )
 
@@ -382,24 +419,33 @@ def plan_announcements(
                 continue
             candle = slot.start
             occasion = _occasion(slot.is_shabbat, slot.holiday)
+            groups = options.groups
             # After sunset: candles from an existing flame, issur already in effect.
             if candle > sunset:
-                for minutes in options.candle_marks:
-                    add(YT_CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion)
-                add(YT_CANDLE_NOW, candle, 0, slot, block, occasion)
+                if groups.get(YT_CANDLE, True):
+                    for minutes in options.yt_marks:
+                        add(YT_CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion)
+                    add(YT_CANDLE_NOW, candle, 0, slot, block, occasion)
                 continue
-            for minutes in options.candle_marks:
-                add(CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion)
+            if groups.get(CANDLE, True):
+                for minutes in options.candle_marks:
+                    add(CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion)
+            final_on = groups.get(SHKIA_FINAL, True)
             final_at = shift(sunset, -options.shkia_final_min * 60)
-            for minutes in options.shkia_marks:
-                at = shift(sunset, -minutes * 60)
-                # Only after candles are lit, and don't speak over the final warning.
-                if at <= candle or at == final_at:
-                    continue
-                add(SHKIA, at, minutes, slot, block, occasion)
-            if final_at > candle:
+            if groups.get(SHKIA, True):
+                for minutes in options.shkia_marks:
+                    at = shift(sunset, -minutes * 60)
+                    # Only after candles are lit, and don't speak over the final warning.
+                    if at <= candle or (final_on and at == final_at):
+                        continue
+                    add(SHKIA, at, minutes, slot, block, occasion)
+            if final_on and final_at > candle:
                 add(SHKIA_FINAL, final_at, options.shkia_final_min, slot, block, occasion)
-        if block.slots and block.slots[-1].anchors.get("sunset") is not None:
+        if (
+            options.groups.get(MOTZEI, True)
+            and block.slots
+            and block.slots[-1].anchors.get("sunset") is not None
+        ):
             minutes = havdalah_minutes_spoken(block, minhag)
             add(MOTZEI, block.end, minutes, None, block, block.title)
 

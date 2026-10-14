@@ -18,18 +18,22 @@ from .const import (
     DEFAULT_SETTINGS,
     DOMAIN,
     EXPORT_SKIP_SETTINGS,
+    PLAN_HORIZON_DAYS,
     SIGNAL_ACTIVITY,
     SIGNAL_UPDATE,
     VERSION,
 )
 from .core import gestures, jcal, planner, timeexpr
 from .core.announcements import (
+    coerce_groups,
     coerce_lead,
     coerce_marks,
     coerce_player_leads,
     coerce_players,
     coerce_templates,
     coerce_volume,
+    options_from_settings,
+    plan_announcements,
 )
 from .manager import ShabbotManager
 from .store import new_id
@@ -176,7 +180,9 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("announce_volume"): _as_vol(coerce_volume),
     vol.Optional("announce_candle_marks"): _as_vol(lambda v: list(coerce_marks(v))),
     vol.Optional("announce_shkia_marks"): _as_vol(lambda v: list(coerce_marks(v))),
+    vol.Optional("announce_yt_marks"): _as_vol(lambda v: list(coerce_marks(v))),
     vol.Optional("announce_shkia_final_min"): vol.All(vol.Coerce(int), vol.Range(min=0, max=180)),
+    vol.Optional("announce_groups"): _as_vol(lambda v: coerce_groups(v, strict=True)),
     vol.Optional("announce_templates"): _as_vol(lambda v: coerce_templates(v, strict=True)),
 })
 
@@ -516,6 +522,39 @@ async def ws_announce_test(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({
+    vol.Required("type"): "shabbot/announce/upcoming",
+    vol.Optional("settings"): dict,
+})
+@websocket_api.async_response
+@_ready
+async def ws_announce_upcoming(hass, connection, msg) -> None:
+    """The next sentences, at the time they should be heard.
+
+    ``settings`` is an unsaved draft from the panel. Zmanim still come from the
+    saved minhag; only announcement options are overlaid.
+    """
+    m = _mgr(hass)
+    settings = dict(m.settings)
+    if msg.get("settings"):
+        settings.update(SETTINGS_SCHEMA(msg["settings"]))
+    options = options_from_settings(settings)
+    now = m.now()
+    blocks = jcal.blocks_between(
+        now.date() - timedelta(days=3),
+        now.date() + timedelta(days=PLAN_HORIZON_DAYS),
+        m.location,
+        m.minhag,
+    )
+    events = plan_announcements(blocks, m.minhag, options)
+    items = [
+        {"at": event.nominal_at.isoformat(), "kind": event.kind, "message": event.message, "minutes": event.minutes}
+        for event in events
+        if event.nominal_at > now
+    ][:8]
+    connection.send_result(msg["id"], {"enabled": options.enabled, "items": items})
+
+
+@websocket_api.websocket_command({
     vol.Required("type"): "shabbot/assignment/set",
     vol.Required("key"): str,
     vol.Optional("routine_id"): vol.Any(None, str),
@@ -631,7 +670,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
     for handler in (
         ws_config, ws_plan, ws_timeline, ws_preview, ws_status, ws_activity, ws_subscribe, ws_export, ws_routine_check,
         ws_routine_save, ws_routine_delete, ws_routines_reorder, ws_rules_save, ws_modes_save, ws_device_save,
-        ws_device_delete, ws_zwave_preset, ws_settings_save, ws_announce_test, ws_assignment_set,
-        ws_override_start, ws_override_end, ws_resume, ws_import, ws_learn,
+        ws_device_delete, ws_zwave_preset, ws_settings_save, ws_announce_test, ws_announce_upcoming,
+        ws_assignment_set, ws_override_start, ws_override_end, ws_resume, ws_import, ws_learn,
     ):
         websocket_api.async_register_command(hass, handler)
