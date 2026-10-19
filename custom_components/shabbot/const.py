@@ -8,7 +8,7 @@ from .core.announcements import ANNOUNCE_DEFAULTS
 
 DOMAIN: Final = "shabbot"
 NAME: Final = "ShabBOT"
-VERSION: Final = "0.2.5-announce.1"
+VERSION: Final = "0.2.5-announce.2"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_CONFIG: Final = f"{DOMAIN}.config"

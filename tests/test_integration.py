@@ -426,3 +426,141 @@ async def test_prerendered_clip_plays_and_a_missing_clip_uses_live_tts(
     await hass.async_block_till_done()
     assert spoken and spoken[-1]["message"] == "a line with no recording"
     assert spoken[-1]["options"] == {"voice": "en_US-lessac-high"}
+
+
+async def test_prerender_file_io_stays_off_the_event_loop(
+        hass: HomeAssistant, manager: ShabbotManager, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Reading, writing, and deleting clips must not run on the loop.
+
+    Home Assistant 2026.10 warns when ``index.json`` is read from ``reschedule``.
+    pytest skips those file checks, so this turns the production detector back on
+    and also fails if a media-folder call still runs on the loop thread.
+    """
+    from functools import partial
+    import io
+    import logging
+    from pathlib import Path
+    import threading
+    import wave
+
+    import homeassistant.block_async_io as block_async_io
+    from homeassistant.util.loop import _PREVIOUSLY_REPORTED
+
+    from custom_components.shabbot import announcer as announcer_mod
+    from custom_components.shabbot.const import PLAN_HORIZON_DAYS
+    from custom_components.shabbot.core import announcements, jcal
+    from custom_components.shabbot.core.pronounce import apply_pronunciation
+    from custom_components.shabbot.prerender import ClipLibrary, media_directory
+
+    def _wav(seconds: float) -> bytes:
+        rate = 16000
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(rate)
+            handle.writeframes(b"\x00\x00" * int(seconds * rate))
+        return buffer.getvalue()
+
+    manager.settings.update({
+        "announce_enabled": True,
+        "announce_players": ["media_player.kitchen"],
+        "announce_tts_entity": "tts.piper",
+        "announce_voice": "en_US-lessac-high",
+        "announce_lead_seconds": 8,
+        "announce_volume": 65,
+        "dry_run": False,
+    })
+    now = manager.now()
+    options = announcements.options_from_settings(manager.settings)
+    blocks = jcal.blocks_between(
+        now.date() - timedelta(days=3), now.date() + timedelta(days=PLAN_HORIZON_DAYS),
+        manager.location, manager.minhag,
+    )
+    events = announcements.plan_announcements(blocks, manager.minhag, options)
+    final = next(event for event in events if event.kind == "shkia_final")
+    spoken_final = apply_pronunciation(final.message, options.pronunciations)
+    library = ClipLibrary(media_directory(hass))
+    library.store("tts.piper", "en_US-lessac-high", "", spoken_final, _wav(3.5))
+    library.store("tts.piper", "en_US-lessac-high", "", "shkee-ah", _wav(1.0))
+    orphan = library.directory / "orphan.wav"
+    orphan.write_bytes(b"RIFF")
+
+    played: list[dict] = []
+
+    async def _play(call) -> None:
+        played.append(dict(call.data))
+
+    hass.services.async_register("media_player", "play_media", _play)
+    hass.services.async_register("media_player", "volume_set", lambda call: None)
+
+    async def _synth(_hass, _engine, _language, _voice, _text) -> bytes:
+        return _wav(3.5)
+
+    monkeypatch.setattr(announcer_mod, "tts_ready", lambda _hass: True)
+    monkeypatch.setattr(announcer_mod, "synthesize", _synth)
+
+    media = library.directory
+    loop_id = threading.get_ident()
+    offenders: list[str] = []
+    for name in (
+        "open", "read_text", "read_bytes", "write_text", "write_bytes",
+        "is_file", "is_dir", "iterdir", "mkdir", "unlink",
+    ):
+        real = getattr(Path, name)
+
+        def _wrap(self, *args, __real=real, __name=name, **kwargs):
+            if threading.get_ident() == loop_id and (self == media or media in self.parents):
+                offenders.append(f"{__name} {self}")
+            return __real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, name, _wrap)
+
+    tracked: list = []
+    real_track = announcer_mod.async_track_point_in_time
+
+    def _track(hass, action, point):
+        tracked.append(action)
+        return real_track(hass, action, point)
+
+    monkeypatch.setattr(announcer_mod, "async_track_point_in_time", _track)
+
+    previous_in_tests = block_async_io._IN_TESTS
+    block_async_io._IN_TESTS = False
+    _PREVIOUSLY_REPORTED.clear()
+    block_async_io.enable()
+    before = manager.announcer._generation
+    try:
+        with caplog.at_level(logging.WARNING, logger="homeassistant.util.loop"):
+            manager.announcer.reschedule()
+            await hass.async_block_till_done()
+            manager.announcer._clips = {}
+            await manager.announcer.async_speak_test("shkia")
+            await hass.async_block_till_done()
+    finally:
+        block_async_io._IN_TESTS = previous_in_tests
+        calls = block_async_io._BLOCKED_CALLS.calls
+        for blocking_call in list(calls):
+            setattr(blocking_call.object, blocking_call.function, blocking_call.original_func)
+        calls.clear()
+        _PREVIOUSLY_REPORTED.clear()
+
+    assert offenders == []
+    assert manager.announcer._generation - before <= 3
+    assert not orphan.exists()
+    assert "shkee-ah" in manager.announcer._clips
+    finals = [
+        action.args[0] for action in tracked
+        if isinstance(action, partial) and action.args and getattr(action.args[0], "announcement", None)
+        and action.args[0].announcement.kind == "shkia_final"
+    ]
+    assert finals
+    assert (finals[-1].announcement.nominal_at - finals[-1].fire_at).total_seconds() == pytest.approx(11.5)
+    assert played and played[0]["media_content_id"].startswith("media-source://media_source/local/shabbot/")
+    assert played[0]["announce"] is True
+    blocking = [
+        record.getMessage() for record in caplog.records
+        if "Detected blocking call" in record.getMessage() and str(media) in record.getMessage()
+    ]
+    assert blocking == []

@@ -170,7 +170,12 @@ def _file_name(engine: str, voice: str, language: str, text: str, extension: str
 
 
 class ClipLibrary:
-    """Persistent clips for one engine, voice, and language."""
+    """Persistent clips for one engine, voice, and language.
+
+    Every method reads or writes the media folder. From the event loop, run
+    them with ``hass.async_add_executor_job`` so Home Assistant does not report
+    a blocking call.
+    """
 
     def __init__(self, directory: Path) -> None:
         self.directory = directory

@@ -61,6 +61,7 @@ class Announcer:
         self._holds: list[tuple[CALLBACK_TYPE, list[_Hold]]] = []
         self._generation = 0
         self._clips: dict[str, Clip] = {}
+        self._clip_signature: tuple[str, str, str] | None = None
 
     def reschedule(self) -> None:
         """Rebuild timers from the current settings and calendar. Safe to call often."""
@@ -70,12 +71,18 @@ class Announcer:
             unsub()
         self._unsubs.clear()
         options = announcements.options_from_settings(self._m.settings)
-        self._clips = {}
         if not options.enabled:
             return
         if not options.players:
             _LOGGER.info("Announcements are enabled but no media player is selected")
             return
+        # Lengths already in memory apply on this pass. Reading the index is
+        # file I/O, so it stays in ``_ensure_clips`` on the executor. A length
+        # that shows up there schedules this again.
+        signature = (options.tts_entity, options.voice, options.language)
+        if signature != self._clip_signature:
+            self._clips = {}
+            self._clip_signature = signature
         now = self._m.now()
         blocks = jcal.blocks_between(
             now.date() - timedelta(days=3),
@@ -84,8 +91,6 @@ class Announcer:
             self._m.minhag,
         )
         events = announcements.plan_announcements(blocks, self._m.minhag, options)
-        if options.tts_entity and not self._m.settings.get("dry_run"):
-            self._clips = self._library().load(options.tts_entity, options.voice, options.language)
         calls = announcements.schedule_announcements(
             events,
             players=options.players,
@@ -149,15 +154,15 @@ class Announcer:
             return spoken
         holds = await self._prepare(players, options.volume)
         if spoken not in self._clips and options.tts_entity:
-            cached = self._library().load(options.tts_entity, options.voice, options.language).get(spoken)
-            if cached is not None:
-                self._clips[spoken] = cached
+            cached = await self._load_index(options)
+            found = cached.get(spoken)
+            if found is not None:
+                self._clips[spoken] = found
         if render_first and spoken not in self._clips:
             await self._render_one(options, spoken)
         clip = self._clips.get(spoken)
         if clip is not None:
-            path = self._library().directory / clip.filename
-            if path.is_file() and await self._play_clip(players, clip):
+            if await self._file_exists(clip.filename) and await self._play_clip(players, clip):
                 self._m.log("announce", message, players[0] if len(players) == 1 else None, players=players)
                 self._schedule_restore(holds, (clip.seconds or _speech_seconds(spoken)) + 1.5)
                 return spoken
@@ -211,8 +216,22 @@ class Announcer:
     async def _ensure_clips(
         self, generation: int, events: list[announcements.Announcement], options: announcements.AnnounceOptions,
     ) -> None:
-        """Render any upcoming sentence that is not already on disk, then reschedule if a length is new."""
-        if generation != self._generation or not tts_ready(self._m.hass):
+        """Load the index off the loop, render anything missing, and reschedule when a length is new."""
+        if generation != self._generation:
+            return
+        try:
+            loaded = await self._load_index(options)
+        except OSError as err:
+            _LOGGER.warning("Could not read pre-rendered announcements: %s", err)
+            return
+        if generation != self._generation:
+            return
+        scheduled = self._clip_seconds(events, options)
+        self._clips = loaded
+        if self._clip_seconds(events, options) != scheduled:
+            self.reschedule()
+            return
+        if not tts_ready(self._m.hass):
             return
         texts = list(dict.fromkeys(
             apply_pronunciation(event.message, options.pronunciations) for event in events
@@ -227,7 +246,7 @@ class Announcer:
             for text in texts:
                 if generation != self._generation:
                     return
-                if text in self._clips and (self._library().directory / self._clips[text].filename).is_file():
+                if text in self._clips and await self._file_exists(self._clips[text].filename):
                     continue
                 if not await self._render_one(options, text):
                     continue
@@ -242,6 +261,17 @@ class Announcer:
             return
         if learned and generation == self._generation:
             self.reschedule()
+
+    async def _load_index(self, options: announcements.AnnounceOptions) -> dict[str, Clip]:
+        """Read ``index.json`` and the clip files off the event loop."""
+        library = self._library()
+        return await self._m.hass.async_add_executor_job(
+            library.load, options.tts_entity, options.voice, options.language,
+        )
+
+    async def _file_exists(self, filename: str) -> bool:
+        path = self._library().directory / filename
+        return await self._m.hass.async_add_executor_job(path.is_file)
 
     async def _render_one(self, options: announcements.AnnounceOptions, text: str) -> bool:
         if not options.tts_entity or not tts_ready(self._m.hass):
