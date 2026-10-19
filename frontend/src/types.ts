@@ -19,6 +19,12 @@ export interface Action {
   repeat?: "once" | "night" | "day" | null;
 }
 
+/** All routines in the order the user arranged them on the Routines page. */
+export const routineList = (config: Pick<Config, "routines" | "routine_order">): Routine[] => {
+  const ids = [...new Set([...(config.routine_order ?? []), ...Object.keys(config.routines)])];
+  return ids.map((id) => config.routines[id]).filter((r): r is Routine => !!r);
+};
+
 export const entitiesOf = (a: Pick<Action, "entity_ids" | "entity_id">): string[] =>
   a.entity_ids ?? (a.entity_id ? [a.entity_id] : []);
 
@@ -85,6 +91,7 @@ export interface Settings {
   havdalah_mode: "degrees" | "minutes";
   havdalah_degrees: number;
   havdalah_minutes: number;
+  yom_tov_end_minutes: number;
   israel: boolean;
   use_elevation: boolean;
   early_shabbat: boolean;
@@ -99,11 +106,50 @@ export interface Settings {
   storm_window_min: number;
   notify_service: string;
   notify_overrides: boolean;
+  announce_enabled: boolean;
+  announce_players: string[];
+  announce_tts_entity: string;
+  announce_voice: string;
+  announce_language: string;
+  announce_lead_seconds: number;
+  announce_player_leads: Record<string, number>;
+  announce_volume: number | null;
+  announce_candle_marks: number[];
+  announce_shkia_marks: number[];
+  announce_yt_marks: number[];
+  announce_shkia_final_min: number;
+  announce_groups: AnnounceGroups;
+  announce_templates: AnnounceTemplates;
+  announce_pronunciations: Record<string, string>;
+}
+
+export interface AnnounceGroups {
+  candle: boolean;
+  shkia: boolean;
+  shkia_final: boolean;
+  motzei: boolean;
+  yt_candle: boolean;
+}
+
+export interface AnnounceUpcoming {
+  enabled: boolean;
+  items: { at: string; kind: string; message: string; minutes: number }[];
+}
+
+export interface AnnounceTemplates {
+  candle: string;
+  shkia: string;
+  shkia_final: string;
+  motzei: string;
+  yt_candle: string;
+  yt_candle_now: string;
 }
 
 export interface Config {
   settings: Settings;
   routines: Record<string, Routine>;
+  /** Routine ids in the user's order (see routineList). */
+  routine_order?: string[];
   rules: Rule[];
   modes: Mode[];
   assignments: Record<string, { routine_id?: string; skip?: boolean; disabled_actions?: string[] }>;
@@ -117,6 +163,7 @@ export interface Meta {
   day_types: string[];
   detectors: string[];
   default_device: Required<DeviceConfig>;
+  default_settings?: Settings;
   location: { latitude: number; longitude: number; time_zone: string; elevation: number };
   is_admin: boolean;
 }

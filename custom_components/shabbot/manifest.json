@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/aniceberg/ShabBOT/issues",
   "requirements": ["pyluach==2.3.0"],
   "single_config_entry": true,
-  "version": "0.2.2"
+  "version": "0.2.5-announce.2"
 }

@@ -21,6 +21,7 @@ from .const import (
     STORAGE_KEY_CONFIG,
     STORAGE_VERSION,
 )
+from .core.announcements import coerce_templates
 
 
 def new_id() -> str:
@@ -68,6 +69,9 @@ class ShabbotStore:
             self.config = data
             self.config.setdefault("settings", {})
             self.config["settings"] = {**DEFAULT_SETTINGS, **self.config["settings"]}
+            stored_templates = self.config["settings"].get("announce_templates")
+            if isinstance(stored_templates, dict):
+                self.config["settings"]["announce_templates"] = coerce_templates(stored_templates)
             for key, empty in (("routines", {}), ("rules", []), ("modes", []), ("assignments", {}), ("devices", {})):
                 self.config.setdefault(key, empty)
         activity = await self._activity_store.async_load()

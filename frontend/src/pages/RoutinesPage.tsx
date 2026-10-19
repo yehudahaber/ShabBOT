@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { callWS } from "../hass";
-import { errorMessage, invalidateAll, useConfig } from "../api";
+import { errorMessage, invalidateAll, queryClient, useConfig } from "../api";
 import { Field, Icon, Loading, SaveBar } from "../components/ui";
 import { EntityMultiPicker, ExprInput } from "../components/inputs";
 import { DragHandle, tempId, useReorder } from "../components/reorder";
 import { dateShort, PART_LABEL, time } from "../format";
-import { entitiesOf, type Action, type Part, type Routine, type RowCheck } from "../types";
+import { entitiesOf, type Action, type Config, type Meta, type Part, routineList, type Routine, type RowCheck } from "../types";
 
 const PARTS: Part[] = ["night", "day", "block"];
 const PART_HELP: Record<Part, string> = {
@@ -24,6 +24,10 @@ const blankAction = (part: Part): Action => ({
   end_state: null,
 });
 
+/** Rows copied from another routine: fresh ids, and only baseline rows keep their repeat. */
+const copyRows = (actions: Action[], part: Part): Action[] =>
+  actions.map(({ repeat, ...a }) => ({ ...structuredClone(a), id: tempId(), ...(part === "block" && repeat ? { repeat } : {}) }));
+
 /** Editor copy of a routine: every row lists its devices in `entity_ids`. */
 const normalize = (r: Routine): Routine => ({
   ...structuredClone(r),
@@ -37,13 +41,16 @@ export function RoutinesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const routines = useMemo(() => Object.values(data?.config.routines ?? {}), [data]);
+  const routines = useMemo(() => (data ? routineList(data.config) : []), [data]);
   const checks = useRowChecks(draft);
   const reorder = useReorder(draft?.actions ?? [], (actions) => setDraft((d) => d && { ...d, actions }));
+  // Open the first routine on load only; later a null selection means a new, unsaved routine.
+  const opened = useRef(false);
   useEffect(() => {
-    if (!data) return;
-    if (selected === null && routines.length) setSelected(routines[0].id);
-  }, [data, routines, selected]);
+    if (opened.current || !routines.length) return;
+    opened.current = true;
+    if (selected === null) setSelected(routines[0].id);
+  }, [routines, selected]);
   // Load the draft only when the selection changes, so background refreshes never wipe unsaved edits.
   useEffect(() => {
     const routine = selected ? data?.config.routines[selected] : undefined;
@@ -86,6 +93,18 @@ export function RoutinesPage() {
     setDraft({ id: "", name: "New routine", part, color: COLORS[routines.length % COLORS.length], description: "", actions: [] });
   };
 
+  const duplicate = () => {
+    if (!draft) return;
+    setSelected(null);
+    setDraft({ ...structuredClone(draft), id: "", name: `${draft.name} (copy)`, actions: copyRows(draft.actions, draft.part) });
+  };
+
+  const copyFrom = (id: string) => {
+    const source = data.config.routines[id];
+    if (!draft || !source) return;
+    setDraft({ ...draft, actions: [...draft.actions, ...copyRows(normalize(source).actions, draft.part)] });
+  };
+
   const remove = async () => {
     if (!draft?.id) return;
     const used = usage(draft.id);
@@ -109,17 +128,8 @@ export function RoutinesPage() {
               <span className="sb-spacer" />
               <button className="sb-btn sb-btn-sm sb-btn-ghost" onClick={() => create(part)}><Icon name="plus" size={14} /> New</button>
             </div>
-            <div className="sb-list">
-              {routines.filter((r) => r.part === part).map((r) => (
-                <button key={r.id} className="sb-list-item" onClick={() => setSelected(r.id)}
-                  style={selected === r.id ? { background: "var(--accent-soft)" } : undefined}>
-                  <i className="sb-dot" style={{ background: r.color ?? "var(--border)" }} />
-                  <span className="sb-grow sb-ellipsis">{r.name}</span>
-                  <span className="sb-hint">{r.actions.length}</span>
-                </button>
-              ))}
-              {routines.filter((r) => r.part === part).length === 0 && <div className="sb-list-item sb-hint">None yet</div>}
-            </div>
+            <RoutineList items={routines.filter((r) => r.part === part)} selected={selected} onSelect={setSelected}
+              onReorder={(ids) => reorderRoutines(routines.map((r) => r.id), ids)} />
           </div>
         ))}
       </div>
@@ -205,7 +215,20 @@ export function RoutinesPage() {
             <button className="sb-btn" onClick={() => setDraft({ ...draft, actions: [...draft.actions, blankAction(draft.part)] })}>
               <Icon name="plus" size={16} /> Add device
             </button>
+            <select className="sb-select" style={{ width: "auto" }} value="" aria-label="Copy rows from another routine"
+              title="Add a copy of another routine's rows to this one" onChange={(e) => copyFrom(e.target.value)}>
+              <option value="">Copy rows from…</option>
+              {PARTS.map((part) => {
+                const sources = routines.filter((r) => r.part === part && r.id !== draft.id && r.actions.length);
+                return sources.length > 0 && (
+                  <optgroup key={part} label={`${PART_LABEL[part]} routines`}>
+                    {sources.map((r) => <option key={r.id} value={r.id}>{r.name} ({r.actions.length})</option>)}
+                  </optgroup>
+                );
+              })}
+            </select>
             <span className="sb-spacer" />
+            {draft.id && <button className="sb-btn" onClick={duplicate}><Icon name="copy" size={16} /> Duplicate routine</button>}
             {draft.id && <button className="sb-btn sb-btn-danger" onClick={remove}>Delete routine</button>}
           </div>
           <SaveBar dirty={dirty || !draft.id} blocked={checks.some((c) => c?.always_invalid) || missingDevice} saving={saving}
@@ -216,6 +239,51 @@ export function RoutinesPage() {
       ) : (
         <div className="sb-card sb-empty">Choose a routine, or create one.</div>
       )}
+    </div>
+  );
+}
+
+/** Puts one part's routines in a new order (keeping the slots the other parts use) and saves it. */
+function reorderRoutines(all: string[], partIds: string[]) {
+  const moved = new Set(partIds);
+  const queue = [...partIds];
+  const order = all.map((id) => (moved.has(id) ? queue.shift()! : id));
+  // Show the new order right away; the save confirms it.
+  queryClient.setQueryData<{ config: Config; meta: Meta }>(["config"], (old) => old && {
+    ...old,
+    config: { ...old.config, routine_order: order },
+  });
+  callWS({ type: "shabbot/routines/reorder", routine_ids: order }).finally(invalidateAll);
+}
+
+/** One part's routines, reorderable with the ⋮⋮ handle; the new order is saved when the drag ends. */
+function RoutineList({ items, selected, onSelect, onReorder }: {
+  items: Routine[]; selected: string | null; onSelect: (id: string) => void; onReorder: (ids: string[]) => void;
+}) {
+  const [moving, setMoving] = useState<Routine[] | null>(null);
+  const shown = moving ?? items;
+  const reorder = useReorder(shown, setMoving);
+  useEffect(() => {
+    if (!moving || reorder.dragging) return;
+    const ids = moving.map((r) => r.id);
+    if (ids.join() !== items.map((r) => r.id).join()) onReorder(ids);
+    setMoving(null);
+  }, [moving, reorder.dragging]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="sb-list">
+      {shown.map((r, i) => (
+        <div key={r.id} className="sb-list-item sb-list-item-grip" {...reorder.row(i)}
+          style={selected === r.id ? { background: "var(--accent-soft)" } : undefined}>
+          {shown.length > 1 && <DragHandle {...reorder.handle(i)} />}
+          <button className="sb-list-select" onClick={() => onSelect(r.id)}>
+            <i className="sb-dot" style={{ background: r.color ?? "var(--border)" }} />
+            <span className="sb-grow sb-ellipsis">{r.name}</span>
+            <span className="sb-hint">{r.actions.length}</span>
+          </button>
+        </div>
+      ))}
+      {shown.length === 0 && <div className="sb-list-item sb-hint">None yet</div>}
     </div>
   );
 }

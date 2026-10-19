@@ -6,7 +6,7 @@ import { errorMessage, invalidateAll, useConfig, usePlan } from "../api";
 import { Icon, Loading, SaveBar } from "../components/ui";
 import { RoutineSelect } from "../components/inputs";
 import { addDays, DAY_TYPE_LABEL, dateShort, HOLIDAY_LABEL, isoDate, PART_LABEL, WEEKDAYS } from "../format";
-import type { Part, Rule } from "../types";
+import { routineList, type Part, type Rule } from "../types";
 
 const PARTS: Part[] = ["night", "day", "block"];
 
@@ -19,7 +19,7 @@ export function RulesPage() {
   const today = new Date();
   const preview = usePlan(isoDate(today), isoDate(addDays(today, 45)));
 
-  const routines = useMemo(() => Object.values(data?.config.routines ?? {}), [data]);
+  const routines = useMemo(() => (data ? routineList(data.config) : []), [data]);
   if (!data || !rules) return <Loading />;
 
   const set = (i: number, patch: Partial<Rule>) => setRules(rules.map((r, j) => (j === i ? { ...r, ...patch } : r)));

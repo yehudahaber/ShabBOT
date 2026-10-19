@@ -1,6 +1,6 @@
 [project]
 name = "shabbot"
-version = "0.2.2"
+version = "0.2.5"
 description = "Shabbat & Yom Tov automation for Home Assistant"
 requires-python = ">=3.14.2"
 dependencies = []

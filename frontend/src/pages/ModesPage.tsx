@@ -5,7 +5,7 @@ import { errorMessage, invalidateAll, useConfig } from "../api";
 import { Check, Field, Icon, Loading, SaveBar } from "../components/ui";
 import { RoutineSelect } from "../components/inputs";
 import { isoDate, PART_LABEL } from "../format";
-import type { Mode, Part } from "../types";
+import { routineList, type Mode, type Part } from "../types";
 
 const PARTS: Part[] = ["night", "day", "block"];
 
@@ -14,7 +14,7 @@ export function ModesPage() {
   const [modes, setModes, dirty, reset] = useDraft<Mode[]>(data?.config.modes);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const routines = useMemo(() => Object.values(data?.config.routines ?? {}), [data]);
+  const routines = useMemo(() => (data ? routineList(data.config) : []), [data]);
   if (!data || !modes) return <Loading />;
 
   const today = isoDate(new Date());

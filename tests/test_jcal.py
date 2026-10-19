@@ -46,18 +46,21 @@ def test_yom_tov_days_match_hebcal(fixture, loc, minhag, year) -> None:
 def test_block_boundaries_match_hebcal(fixture, loc, minhag, year) -> None:
     candles, havdalah, _ = _expected(_load(fixture))
     blocks = jcal.blocks_between(date(year, 1, 2), date(year, 12, 29), loc, minhag)
-    starts = {b.start for b in blocks}
-    ends = {b.end for b in blocks}
     in_range = lambda t: date(year, 1, 2) <= t.date() <= date(year, 12, 28)  # noqa: E731
-    # Every block start is a hebcal candle lighting (within a minute), and every havdalah is a block end.
-    for t in filter(in_range, starts):
-        assert any(abs((t - c).total_seconds()) <= 60 for c in candles), t
-    for h in filter(in_range, havdalah):
-        assert any(abs((h - e).total_seconds()) <= 60 for e in ends), h
-    # Candle lightings inside blocks are the night starts of later slots.
-    slot_starts = [s.start for b in blocks for s in b.slots if s.part is jcal.Part.NIGHT]
+    # Erev candle lighting still matches hebcal. Shabbat havdalah does too.
+    for block in blocks:
+        if in_range(block.start):
+            assert any(abs((block.start - c).total_seconds()) <= 60 for c in candles), block.start
+        if in_range(block.end) and block.days[-1].weekday() == 5:
+            assert any(abs((block.end - h).total_seconds()) <= 60 for h in havdalah), block.end
+    # A weekday Yom Tov ends at the minute offset, not hebcal's sun-angle havdalah.
+    nights = [s for b in blocks for s in b.slots if s.part is jcal.Part.NIGHT]
     for c in filter(in_range, candles):
-        assert any(abs((c - s).total_seconds()) <= 60 for s in slot_starts), c
+        if any(abs((c - s.start).total_seconds()) <= 60 for s in nights):
+            continue
+        assert any(
+            s.start > s.anchors["sunset"] and abs((s.start - c).total_seconds()) < 3 * 3600 for s in nights
+        ), c
 
 
 def test_pesach_2027_three_day_block() -> None:
@@ -122,6 +125,42 @@ def test_early_shabbat_never_before_plag() -> None:
     plag = jcal.Zmanim(date(2027, 6, 25), BROOKLYN, six).plag
     assert block.start > datetime(2027, 6, 25, 18, 0, tzinfo=BROOKLYN.tzinfo)
     assert block.start - plag < timedelta(minutes=1)
+
+
+def _offset(end: datetime, sunset: datetime, minutes: int) -> None:
+    gap = (end - sunset).total_seconds()
+    assert minutes * 60 <= gap < minutes * 60 + 60, gap
+
+
+def test_yom_tov_end_is_separate_from_shabbat_havdalah() -> None:
+    """Weekday Yom Tov ends at yom_tov_end_minutes. Shabbat keeps its own setting."""
+    minhag = jcal.Minhag(havdalah_mode="minutes", havdalah_minutes=60, yom_tov_end_minutes=42)
+    pesach = _block(date(2027, 4, 22), minhag)
+    nights = [s for s in pesach.slots if s.part is jcal.Part.NIGHT]
+    # Thu YT → Fri YT: Yom Tov end. Fri → Shabbat: candle lighting, before sunset.
+    _offset(nights[1].start, nights[1].anchors["sunset"], 42)
+    assert nights[2].start < nights[2].anchors["sunset"]
+    _offset(pesach.end, pesach.slots[-1].anchors["sunset"], 60)
+    # Day schedules stop at the same boundary the night starts on.
+    assert pesach.slots[1].end == nights[1].start
+
+    rh = _block(date(2026, 9, 12), minhag)
+    rh_nights = [s for s in rh.slots if s.part is jcal.Part.NIGHT]
+    _offset(rh_nights[1].start, rh_nights[1].anchors["sunset"], 60)
+    _offset(rh.end, rh.slots[-1].anchors["sunset"], 42)
+    assert rh.slots[1].end == rh_nights[1].start
+
+    # Sun-angle Shabbat havdalah does not move the weekday Yom Tov end.
+    degrees = jcal.Minhag(yom_tov_end_minutes=50)
+    shavuot = _block(date(2026, 5, 22), degrees)  # Friday Shavuot runs into Shabbat; block ends Saturday
+    assert shavuot.days[-1].weekday() == 5
+    angle = jcal.Zmanim(shavuot.days[-1], BROOKLYN, degrees).havdalah
+    assert shavuot.end == angle
+    weekday = next(
+        b for b in jcal.blocks_between(date(2026, 1, 1), date(2026, 12, 31), BROOKLYN, degrees)
+        if b.days[-1].weekday() != 5
+    )
+    _offset(weekday.end, weekday.slots[-1].anchors["sunset"], 50)
 
 
 def test_early_shabbat_skips_yom_tov_on_shabbat() -> None:
