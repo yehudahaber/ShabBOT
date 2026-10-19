@@ -214,6 +214,46 @@ def test_israel_one_day_pesach_ends_at_the_yom_tov_offset() -> None:
 # ---------------------------------------------------------------- lead and DST
 
 
+def test_stop_melacha_ends_at_the_mark_when_the_clip_length_is_known() -> None:
+    """The final warning finishes one minute before shkia, instead of starting then."""
+    _, events = _plan(date(2026, 10, 10))
+    final = _by(events, "shkia_final")
+    candle = _by(events, "candle", minutes=60)
+    (final_call,) = announcements.schedule_announcements(
+        [final],
+        players=["media_player.kitchen"],
+        lead_seconds=8,
+        player_leads={},
+        not_before=final.nominal_at - timedelta(hours=1),
+        clip_seconds={final.id: 3.5},
+    )
+    assert (final.nominal_at - final_call.fire_at).total_seconds() == pytest.approx(11.5)
+    (candle_call,) = announcements.schedule_announcements(
+        [candle],
+        players=["media_player.kitchen"],
+        lead_seconds=8,
+        player_leads={},
+        not_before=candle.nominal_at - timedelta(hours=1),
+        clip_seconds={candle.id: 3.5},
+    )
+    assert (candle.nominal_at - candle_call.fire_at).total_seconds() == 8
+
+
+def test_unknown_clip_length_does_not_move_the_final_warning() -> None:
+    _, events = _plan(date(2026, 10, 10))
+    final = _by(events, "shkia_final")
+    calls = announcements.schedule_announcements(
+        [final],
+        players=["media_player.kitchen", "media_player.den"],
+        lead_seconds=5,
+        player_leads={"media_player.den": 12},
+        not_before=final.nominal_at - timedelta(hours=1),
+    )
+    by_lead = {item.lead_seconds: item for item in calls}
+    assert (final.nominal_at - by_lead[5].fire_at).total_seconds() == 5
+    assert (final.nominal_at - by_lead[12].fire_at).total_seconds() == 12
+
+
 def test_lead_groups_players_and_skips_the_past() -> None:
     _, events = _plan(date(2026, 10, 10))
     event = _by(events, "candle", minutes=60)

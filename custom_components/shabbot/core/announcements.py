@@ -44,10 +44,16 @@ Latency
 -------
 ``nominal_at`` is when the words should be heard. ``schedule_announcements``
 fires that many real seconds earlier (one global lead, with an optional
-per-player override) so TTS generation and speaker buffering can finish first.
-The lead is subtracted in UTC, so a daylight-saving gap cannot shorten it.
-A call whose fire time is already past is dropped: a late "60 minutes until…"
-is worse than silence.
+per-player override) so speaker buffering can finish first. The lead is
+subtracted in UTC, so a daylight-saving gap cannot shorten it. A call whose
+fire time is already past is dropped: a late "60 minutes until…" is worse
+than silence.
+
+The final "stop all melacha" warning is the exception. When its clip length
+is already known, the trigger moves earlier by that many seconds as well, so
+the sentence finishes at ``nominal_at`` (one minute before shkia, by default)
+instead of starting then and running past the minute. Countdown marks stay
+start-aligned: "60 minutes until…" should be heard at that mark.
 """
 
 from __future__ import annotations
@@ -57,6 +63,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from . import jcal
+from .pronounce import DEFAULT_PRONUNCIATIONS, coerce_pronunciations
 
 CANDLE = "candle"
 SHKIA = "shkia"
@@ -89,6 +96,9 @@ DEFAULT_YT_MARKS = (60, 30, 15, 5)
 # Panel switches. yt_candle also covers the sentence spoken when preparation may begin.
 GROUP_KEYS = (CANDLE, SHKIA, SHKIA_FINAL, MOTZEI, YT_CANDLE)
 
+# These finish at nominal_at once the rendered clip length is known.
+END_ON_TIME_KINDS = frozenset({SHKIA_FINAL})
+
 # Merged into the integration settings. Nested values are replaced wholesale on save.
 ANNOUNCE_DEFAULTS: dict[str, Any] = {
     "announce_enabled": False,
@@ -105,6 +115,7 @@ ANNOUNCE_DEFAULTS: dict[str, Any] = {
     "announce_shkia_final_min": 1,
     "announce_groups": {key: True for key in GROUP_KEYS},
     "announce_templates": dict(DEFAULT_TEMPLATES),
+    "announce_pronunciations": dict(DEFAULT_PRONUNCIATIONS),
 }
 
 def shift(moment: datetime, seconds: float) -> datetime:
@@ -284,6 +295,7 @@ class AnnounceOptions:
     shkia_final_min: int
     groups: dict[str, bool]
     templates: dict[str, str]
+    pronunciations: dict[str, str]
 
 
 def options_from_settings(settings: dict[str, Any] | None) -> AnnounceOptions:
@@ -319,6 +331,13 @@ def options_from_settings(settings: dict[str, Any] | None) -> AnnounceOptions:
         groups = coerce_groups(s.get("announce_groups"))
     except ValueError:
         groups = {key: True for key in GROUP_KEYS}
+    if "announce_pronunciations" not in s or s.get("announce_pronunciations") is None:
+        pronunciations = dict(DEFAULT_PRONUNCIATIONS)
+    else:
+        try:
+            pronunciations = coerce_pronunciations(s.get("announce_pronunciations"))
+        except ValueError:
+            pronunciations = dict(DEFAULT_PRONUNCIATIONS)
     return AnnounceOptions(
         enabled=bool(s.get("announce_enabled")),
         players=players,
@@ -334,6 +353,7 @@ def options_from_settings(settings: dict[str, Any] | None) -> AnnounceOptions:
         shkia_final_min=final_min,
         groups=groups,
         templates=templates,
+        pronunciations=pronunciations,
     )
 
 
@@ -470,18 +490,30 @@ def schedule_announcements(
     lead_seconds: int,
     player_leads: dict[str, int],
     not_before: datetime,
+    clip_seconds: dict[str, float] | None = None,
 ) -> list[ScheduledCall]:
-    """Group players that share a lead and drop calls that should already have fired."""
+    """Group players that share a lead and drop calls that should already have fired.
+
+    ``clip_seconds`` maps an announcement id to a known recording length.
+    Kinds in ``END_ON_TIME_KINDS`` start that much earlier so the clip ends
+    at ``nominal_at``. Other kinds ignore it.
+    """
     if not players:
         return []
     groups: dict[int, list[str]] = {}
     for player in players:
         lead = int(player_leads.get(player, lead_seconds))
         groups.setdefault(lead, []).append(player)
+    lengths = clip_seconds or {}
     calls: list[ScheduledCall] = []
     for event in events:
+        extra = 0.0
+        if event.kind in END_ON_TIME_KINDS:
+            extra = float(lengths.get(event.id) or 0.0)
+            if extra < 0:
+                extra = 0.0
         for lead, group in groups.items():
-            fire_at = shift(event.nominal_at, -lead)
+            fire_at = shift(event.nominal_at, -(lead + extra))
             if fire_at <= not_before:
                 continue
             calls.append(ScheduledCall(

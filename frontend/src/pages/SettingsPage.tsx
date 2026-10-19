@@ -172,7 +172,8 @@ export function SettingsPage() {
         )}
       </div>
 
-      <AnnouncementsCard draft={draft} set={set} dirty={dirty} dryRun={draft.dry_run} onNotice={setNotice} />
+      <AnnouncementsCard draft={draft} set={set} dirty={dirty} dryRun={draft.dry_run} onNotice={setNotice}
+        defaultPronunciations={data.meta.default_settings?.announce_pronunciations} />
 
       <SaveBar dirty={dirty} saving={saving} error={error} onSave={save} onReset={reset} />
 

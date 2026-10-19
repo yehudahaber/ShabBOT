@@ -1,5 +1,10 @@
 """Speak planned announcements on media players, or log them in dry run.
 
+Audio is rendered ahead of time into the local media folder and played from
+that file, so the speakers are not waiting on TTS at the mark. A missing file
+falls back to live ``tts.speak``. The final stop-melacha warning is scheduled
+from the known clip length so the sentence ends on its mark.
+
 Sonos players are snapshotted before speech and restored afterwards, so a
 previous queue and volume come back. Other players only have their volume put
 back, and only when an announcement volume is set — there is no standard
@@ -8,20 +13,21 @@ snapshot service for them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
 import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.util import dt as dt_util
 
 from .const import PLAN_HORIZON_DAYS
 from .core import announcements, jcal
+from .core.pronounce import apply_pronunciation
+from .prerender import Clip, ClipLibrary, media_directory, synthesize, tts_ready
 
 if TYPE_CHECKING:
     from .manager import ShabbotManager
@@ -29,19 +35,14 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 TEST_MESSAGE = "This is a ShabBOT announcement test."
-
-
-@dataclass(slots=True)
-class _Hold:
-    """How to put one player back after the sentence."""
-
-    entity_id: str
-    sonos: bool
-    previous_volume: float | None
+# Render again this long before candle lighting, in case startup was too early
+# or the engine was not ready yet. The daily rebuild also renders.
+PRE_RENDER_HOURS = 6
+_MESSAGE_MAX = 400
 
 
 def _speech_seconds(message: str) -> float:
-    """How long to wait before restoring playback. TTS returns when audio starts, not when it ends."""
+    """How long to wait before restoring playback when the clip length is unknown."""
     words = max(1, len(message.split()))
     return max(8.0, words * 0.45 + 4.0)
 
@@ -52,19 +53,24 @@ def _is_sonos(hass: HomeAssistant, entity_id: str) -> bool:
 
 
 class Announcer:
-    """Schedules announcement timers and performs the TTS calls."""
+    """Schedules announcement timers and plays pre-rendered audio, or live TTS."""
 
     def __init__(self, manager: ShabbotManager) -> None:
         self._m = manager
         self._unsubs: list[CALLBACK_TYPE] = []
         self._holds: list[tuple[CALLBACK_TYPE, list[_Hold]]] = []
+        self._generation = 0
+        self._clips: dict[str, Clip] = {}
 
     def reschedule(self) -> None:
         """Rebuild timers from the current settings and calendar. Safe to call often."""
+        self._generation += 1
+        generation = self._generation
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
         options = announcements.options_from_settings(self._m.settings)
+        self._clips = {}
         if not options.enabled:
             return
         if not options.players:
@@ -78,20 +84,27 @@ class Announcer:
             self._m.minhag,
         )
         events = announcements.plan_announcements(blocks, self._m.minhag, options)
+        if options.tts_entity and not self._m.settings.get("dry_run"):
+            self._clips = self._library().load(options.tts_entity, options.voice, options.language)
         calls = announcements.schedule_announcements(
             events,
             players=options.players,
             lead_seconds=options.lead_seconds,
             player_leads=options.player_leads,
             not_before=now,
+            clip_seconds=self._clip_seconds(events, options),
         )
         for call in calls:
             self._unsubs.append(async_track_point_in_time(
                 self._m.hass, partial(self._on_due, call), call.fire_at,
             ))
+        self._schedule_prerender_refresh(events, now, options)
+        if options.tts_entity and not self._m.settings.get("dry_run"):
+            self._m.hass.async_create_task(self._ensure_clips(generation, events, options))
         _LOGGER.debug("Scheduled %s announcement triggers", len(calls))
 
     async def async_stop(self) -> None:
+        self._generation += 1
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
@@ -107,33 +120,55 @@ class Announcer:
             call.announcement.message, list(call.players),
         ))
 
-    async def async_speak_test(self, message: str | None = None) -> None:
-        """Speak (or, in dry run, log) one sentence now. Does not require the schedule to be enabled."""
+    async def async_speak_test(self, message: str | None = None) -> str:
+        """Speak (or, in dry run, log) one sentence now. Does not require the schedule to be enabled.
+
+        Returns the text actually sent to TTS, after the pronunciation map.
+        """
         options = announcements.options_from_settings(self._m.settings)
         if not options.players:
             raise ServiceValidationError("Choose at least one media player")
         if not self._m.settings.get("dry_run") and not options.tts_entity:
             raise ServiceValidationError("Choose a TTS engine")
-        await self._speak(message.strip() if message and message.strip() else TEST_MESSAGE, list(options.players))
+        text = message.strip() if message and message.strip() else TEST_MESSAGE
+        if len(text) > _MESSAGE_MAX:
+            raise ServiceValidationError("That line is too long")
+        return await self._speak(text, list(options.players), render_first=True)
 
-    async def _speak(self, message: str, players: list[str]) -> None:
+    async def _speak(self, message: str, players: list[str], *, render_first: bool = False) -> str:
+        options = announcements.options_from_settings(self._m.settings)
+        spoken = apply_pronunciation(message, options.pronunciations)
         if not players:
-            return
+            return spoken
         if self._m.settings.get("dry_run"):
             self._m.log("announce", f"Dry run: {message}", players[0] if len(players) == 1 else None, players=players)
-            return
-        options = announcements.options_from_settings(self._m.settings)
+            return spoken
         hass = self._m.hass
         if not options.tts_entity:
             self._m.log("error", f"Announcement not spoken (choose a TTS engine): {message}")
-            return
+            return spoken
+        holds = await self._prepare(players, options.volume)
+        if spoken not in self._clips and options.tts_entity:
+            cached = self._library().load(options.tts_entity, options.voice, options.language).get(spoken)
+            if cached is not None:
+                self._clips[spoken] = cached
+        if render_first and spoken not in self._clips:
+            await self._render_one(options, spoken)
+        clip = self._clips.get(spoken)
+        if clip is not None:
+            path = self._library().directory / clip.filename
+            if path.is_file() and await self._play_clip(players, clip):
+                self._m.log("announce", message, players[0] if len(players) == 1 else None, players=players)
+                self._schedule_restore(holds, (clip.seconds or _speech_seconds(spoken)) + 1.5)
+                return spoken
+            _LOGGER.info("Pre-rendered announcement missing or unplayable, using live TTS")
         if not hass.services.has_service("tts", "speak"):
             self._m.log("error", f"Announcement not spoken (tts.speak is unavailable): {message}")
-            return
-        holds = await self._prepare(players, options.volume)
+            await self._restore(holds)
+            return spoken
         data: dict[str, Any] = {
             "media_player_entity_id": players,
-            "message": message,
+            "message": spoken,
             "cache": True,
         }
         if options.language:
@@ -148,9 +183,119 @@ class Announcer:
             self._m.log("error", f"Announcement failed: {err}")
             _LOGGER.warning("Announcement failed: %s", err)
             await self._restore(holds)
-            return
+            return spoken
         self._m.log("announce", message, players[0] if len(players) == 1 else None, players=players)
-        self._schedule_restore(holds, _speech_seconds(message))
+        self._schedule_restore(holds, _speech_seconds(spoken))
+        return spoken
+
+    async def _play_clip(self, players: list[str], clip: Clip) -> bool:
+        hass = self._m.hass
+        if not hass.services.has_service("media_player", "play_media"):
+            return False
+        try:
+            await hass.services.async_call(
+                "media_player", "play_media",
+                {
+                    "entity_id": players,
+                    "media_content_id": clip.media_content_id,
+                    "media_content_type": "music",
+                    "announce": True,
+                },
+                blocking=True,
+            )
+        except Exception as err:
+            _LOGGER.warning("Playing pre-rendered announcement failed: %s", err)
+            return False
+        return True
+
+    async def _ensure_clips(
+        self, generation: int, events: list[announcements.Announcement], options: announcements.AnnounceOptions,
+    ) -> None:
+        """Render any upcoming sentence that is not already on disk, then reschedule if a length is new."""
+        if generation != self._generation or not tts_ready(self._m.hass):
+            return
+        texts = list(dict.fromkeys(
+            apply_pronunciation(event.message, options.pronunciations) for event in events
+        ))
+        end_texts = {
+            apply_pronunciation(event.message, options.pronunciations)
+            for event in events
+            if event.kind in announcements.END_ON_TIME_KINDS
+        }
+        learned = False
+        try:
+            for text in texts:
+                if generation != self._generation:
+                    return
+                if text in self._clips and (self._library().directory / self._clips[text].filename).is_file():
+                    continue
+                if not await self._render_one(options, text):
+                    continue
+                if text in end_texts and self._clips[text].seconds:
+                    learned = True
+            if all(text in self._clips for text in texts):
+                await self._m.hass.async_add_executor_job(
+                    self._library().drop_unreferenced, options.tts_entity, options.voice, options.language,
+                )
+        except Exception as err:
+            _LOGGER.warning("Could not pre-render announcements: %s", err)
+            return
+        if learned and generation == self._generation:
+            self.reschedule()
+
+    async def _render_one(self, options: announcements.AnnounceOptions, text: str) -> bool:
+        if not options.tts_entity or not tts_ready(self._m.hass):
+            return False
+        try:
+            audio = await synthesize(
+                self._m.hass, options.tts_entity, options.language, options.voice, text,
+            )
+        except (HomeAssistantError, ServiceValidationError, OSError) as err:
+            _LOGGER.warning("TTS pre-render failed: %s", err)
+            return False
+        if not audio:
+            return False
+        clip = await self._m.hass.async_add_executor_job(
+            self._library().store, options.tts_entity, options.voice, options.language, text, audio,
+        )
+        self._clips[text] = clip
+        return True
+
+    def _library(self) -> ClipLibrary:
+        return ClipLibrary(media_directory(self._m.hass))
+
+    def _clip_seconds(
+        self, events: list[announcements.Announcement], options: announcements.AnnounceOptions,
+    ) -> dict[str, float]:
+        lengths: dict[str, float] = {}
+        for event in events:
+            if event.kind not in announcements.END_ON_TIME_KINDS:
+                continue
+            spoken = apply_pronunciation(event.message, options.pronunciations)
+            clip = self._clips.get(spoken)
+            if clip and clip.seconds:
+                lengths[event.id] = clip.seconds
+        return lengths
+
+    def _schedule_prerender_refresh(
+        self, events: list[announcements.Announcement], now, options: announcements.AnnounceOptions,
+    ) -> None:
+        """One more render a few hours before candle lighting, on top of startup and the daily rebuild."""
+        if not options.tts_entity or self._m.settings.get("dry_run"):
+            return
+        upcoming = []
+        for event in events:
+            if event.kind != announcements.CANDLE:
+                continue
+            at = announcements.shift(event.nominal_at, event.minutes * 60)
+            if at > now:
+                upcoming.append(at)
+        if not upcoming:
+            return
+        refresh_at = announcements.shift(min(upcoming), -PRE_RENDER_HOURS * 3600)
+        if refresh_at <= now:
+            return
+        self._unsubs.append(async_track_point_in_time(self._m.hass, lambda _now: self.reschedule(), refresh_at))
 
     async def _prepare(self, players: list[str], volume: int | None) -> list[_Hold]:
         hass = self._m.hass
@@ -218,3 +363,12 @@ class Announcer:
                 )
             except Exception as err:
                 _LOGGER.warning("Could not restore volume on %s: %s", hold.entity_id, err)
+
+
+class _Hold:
+    """How to put one player back after the sentence."""
+
+    def __init__(self, entity_id: str, sonos: bool, previous_volume: float | None) -> None:
+        self.entity_id = entity_id
+        self.sonos = sonos
+        self.previous_volume = previous_volume

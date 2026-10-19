@@ -59,6 +59,15 @@ const saved: Settings = {
   announce_shkia_final_min: 1,
   announce_groups: GROUPS,
   announce_templates: TEMPLATES,
+  announce_pronunciations: {
+    shkia: "shkee-ah",
+    melacha: "meh-lah-khah",
+    muttar: "moo-tahr",
+    shabbat: "shah-baht",
+    "yom tov": "yohm tohv",
+    havdalah: "hahv-dah-lah",
+    "rosh hashana": "rohsh hah-shah-nah",
+  },
 };
 
 const UPCOMING: AnnounceUpcoming["items"] = [
@@ -117,6 +126,7 @@ const hass: Hass = {
             after_override: "reassert",
             override_group: [],
           },
+          default_settings: saved,
           location: { latitude: 40.6501, longitude: -73.94958, time_zone: "America/New_York", elevation: 18 },
           is_admin: true,
         },

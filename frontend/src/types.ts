@@ -120,6 +120,7 @@ export interface Settings {
   announce_shkia_final_min: number;
   announce_groups: AnnounceGroups;
   announce_templates: AnnounceTemplates;
+  announce_pronunciations: Record<string, string>;
 }
 
 export interface AnnounceGroups {
@@ -162,6 +163,7 @@ export interface Meta {
   day_types: string[];
   detectors: string[];
   default_device: Required<DeviceConfig>;
+  default_settings?: Settings;
   location: { latitude: number; longitude: number; time_zone: string; elevation: number };
   is_admin: boolean;
 }

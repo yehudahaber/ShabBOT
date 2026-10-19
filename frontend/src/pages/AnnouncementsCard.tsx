@@ -3,6 +3,7 @@ import { callWS, friendlyName, useHassSelector } from "../hass";
 import { errorMessage } from "../api";
 import { dayTime } from "../format";
 import { Check, Field } from "../components/ui";
+import { applyPronunciation } from "../pronunciations";
 import type { AnnounceGroups, AnnounceTemplates, AnnounceUpcoming, Settings } from "../types";
 
 const MARK_MAX = 720;
@@ -63,7 +64,7 @@ function samePlayers(a: [string, string][], b: [string, string][]): boolean {
   return a.length === b.length && a.every((row, i) => row[0] === b[i][0] && row[1] === b[i][1]);
 }
 
-export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAdvanced = false }: {
+export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAdvanced = false, defaultPronunciations }: {
   draft: Settings;
   set: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
   dirty: boolean;
@@ -71,6 +72,7 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
   onNotice: (message: string) => void;
   /** Preview harness: open the Advanced section. */
   startAdvanced?: boolean;
+  defaultPronunciations?: Record<string, string>;
 }) {
   const groups = draft.announce_groups ?? DEFAULT_GROUPS;
   const templates = draft.announce_templates;
@@ -102,13 +104,17 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
     };
   }, [draft]);
 
-  const testSpeak = async () => {
+  const testSpeak = async (message?: string) => {
     setTesting(true);
     try {
-      const result = await callWS<{ dry_run: boolean }>({ type: "shabbot/announce/test" });
+      const result = await callWS<{ dry_run: boolean; spoken: string }>({
+        type: "shabbot/announce/test",
+        ...(message ? { message } : {}),
+      });
+      const heard = result.spoken && result.spoken !== (message || "") ? ` Heard as “${result.spoken}”.` : "";
       onNotice(result.dry_run
-        ? "Dry run: the test was logged on the Activity tab, not spoken."
-        : "Test announcement sent.");
+        ? `Dry run: the test was logged on the Activity tab, not spoken.${heard}`
+        : `Test announcement sent.${heard}`);
     } catch (e) {
       onNotice(errorMessage(e));
     } finally {
@@ -138,11 +144,13 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
 
       <div className="sb-grid-2">
         <TtsField value={draft.announce_tts_entity} onChange={(v) => set("announce_tts_entity", v)} />
-        <Field label="Lead (seconds)" hint="Start this early so the words land on time. Sonos often needs 5–10.">
-          <input className="sb-input" type="number" min={0} max={300} value={draft.announce_lead_seconds}
-            onChange={(e) => set("announce_lead_seconds", clampInt(e.target.value, 0, 300))} />
-        </Field>
+        <VoiceField engine={draft.announce_tts_entity} language={draft.announce_language}
+          value={draft.announce_voice} onChange={(v) => set("announce_voice", v)} />
       </div>
+      <Field label="Lead (seconds)" hint="Start this early so the words land on time. The stop-melacha clip also starts early by its own length, so it finishes on the mark. Sonos often needs 5–10.">
+        <input className="sb-input" type="number" min={0} max={300} value={draft.announce_lead_seconds}
+          onChange={(e) => set("announce_lead_seconds", clampInt(e.target.value, 0, 300))} />
+      </Field>
 
       <VolumeField value={draft.announce_volume} onChange={(v) => set("announce_volume", v)} />
 
@@ -174,10 +182,19 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
         </Group>
       </div>
 
+      <PronunciationEditor
+        value={draft.announce_pronunciations ?? {}}
+        defaults={defaultPronunciations ?? {}}
+        onChange={(v) => set("announce_pronunciations", v)}
+        testing={testing}
+        dirty={dirty}
+        onSpeak={(line) => void testSpeak(line)}
+      />
+
       <details className="sb-advanced" {...(startAdvanced ? { open: true } : {})}>
         <summary>Advanced</summary>
         <div className="sb-stack">
-          <p className="sb-hint">A different lead for one speaker, the voice, and the exact sentences.</p>
+          <p className="sb-hint">A different lead for one speaker, the language, and the exact sentences.</p>
           {draft.announce_players.length > 0 ? (
             <div className="sb-grid-2">
               {draft.announce_players.map((id) => (
@@ -195,14 +212,9 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
           ) : (
             <p className="sb-hint">Choose speakers to give one of them its own lead.</p>
           )}
-          <div className="sb-grid-2">
-            <Field label="Voice" hint="Blank uses the engine’s default.">
-              <input className="sb-input" value={draft.announce_voice} onChange={(e) => set("announce_voice", e.target.value)} />
-            </Field>
-            <Field label="Language" hint="Blank uses the engine’s default. Example: en">
-              <input className="sb-input" value={draft.announce_language} onChange={(e) => set("announce_language", e.target.value)} />
-            </Field>
-          </div>
+          <Field label="Language" hint="Blank uses the engine’s default. Example: en_US">
+            <input className="sb-input" value={draft.announce_language} onChange={(e) => set("announce_language", e.target.value)} />
+          </Field>
           <p className="sb-hint">
             Placeholders: {"{minutes}"}, {"{unit}"}, {"{minutes_words}"}, {"{occasion}"}, {"{title}"}. A blank template skips that sentence.
           </p>
@@ -215,7 +227,7 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
       </details>
 
       <div className="sb-row">
-        <button className="sb-btn" type="button" disabled={testing || dirty} onClick={testSpeak}>
+        <button className="sb-btn" type="button" disabled={testing || dirty} onClick={() => void testSpeak()}>
           {testing ? "Speaking…" : "Speak a test"}
         </button>
         <span className="sb-hint">
@@ -374,6 +386,128 @@ function SpeakerPicker({ value, onChange }: { value: string[]; onChange: (v: str
         ))}
       </div>
     </div>
+  );
+}
+
+function VoiceField({ engine, language, value, onChange }: {
+  engine: string; language: string; value: string; onChange: (v: string) => void;
+}) {
+  const [voices, setVoices] = useState<{ voice_id: string; name?: string }[]>([]);
+  useEffect(() => {
+    if (!engine) {
+      setVoices([]);
+      return;
+    }
+    let cancelled = false;
+    callWS<{ voices: { voice_id: string; name?: string }[] | null }>({
+      type: "tts/engine/voices",
+      engine_id: engine,
+      language: language.trim() || "en_US",
+    }).then(
+      (result) => { if (!cancelled) setVoices(result.voices ?? []); },
+      () => { if (!cancelled) setVoices([]); },
+    );
+    return () => { cancelled = true; };
+  }, [engine, language]);
+  const presets = [
+    { voice_id: "en_US-lessac-high", name: "Piper Lessac high" },
+    { voice_id: "3", name: "Kokoro af_heart" },
+  ];
+  const seen = new Set<string>();
+  const options = [...presets, ...voices].filter((voice) => {
+    if (!voice.voice_id || seen.has(voice.voice_id)) return false;
+    seen.add(voice.voice_id);
+    return true;
+  });
+  return (
+    <Field label="Voice" hint="Blank uses the engine’s default. Piper Lessac is en_US-lessac-high. Kokoro af_heart on sherpa is 3.">
+      <input className="sb-input" list="sb-announce-voices" value={value} placeholder="Engine default"
+        onChange={(e) => onChange(e.target.value)} />
+      <datalist id="sb-announce-voices">
+        {options.map((voice) => <option key={voice.voice_id} value={voice.voice_id}>{voice.name ?? voice.voice_id}</option>)}
+      </datalist>
+    </Field>
+  );
+}
+
+function PronunciationEditor({ value, defaults, onChange, testing, dirty, onSpeak }: {
+  value: Record<string, string>;
+  defaults: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+  testing: boolean;
+  dirty: boolean;
+  onSpeak: (line: string) => void;
+}) {
+  const rows = Object.entries(value);
+  const [addWord, setAddWord] = useState("");
+  const [addSays, setAddSays] = useState("");
+  const [sample, setSample] = useState("shkia");
+  const commit = (next: [string, string][]) => {
+    const map: Record<string, string> = {};
+    for (const [word, says] of next) {
+      if (word.trim()) map[word] = says;
+    }
+    onChange(map);
+  };
+  const spoken = applyPronunciation(sample, value);
+  return (
+    <details className="sb-advanced">
+      <summary>Pronunciation</summary>
+      <div className="sb-stack">
+        <p className="sb-hint">
+          Whole words, before the voice speaks. shkia is one word, “shkee-ah”, not “S-H KIA”. Piper and Kokoro both read these spellings.
+        </p>
+        {rows.map(([word, says], index) => (
+          <div className="sb-pron-row" key={index}>
+            <input className="sb-input" aria-label={`Word ${index + 1}`} value={word}
+              onChange={(e) => commit(rows.map((row, i) => i === index ? [e.target.value, says] : row))} />
+            <span className="sb-pron-says">says</span>
+            <input className="sb-input" aria-label={`Sounds like ${word || index + 1}`} value={says}
+              onChange={(e) => commit(rows.map((row, i) => i === index ? [word, e.target.value] : row))} />
+            <button className="sb-btn sb-btn-sm" type="button" aria-label={`Remove ${word || "row"}`}
+              onClick={() => commit(rows.filter((_, i) => i !== index))}>×</button>
+          </div>
+        ))}
+        <div className="sb-pron-row">
+          <input className="sb-input" aria-label="New word" placeholder="Word" value={addWord}
+            onChange={(e) => setAddWord(e.target.value)} />
+          <span className="sb-pron-says">says</span>
+          <input className="sb-input" aria-label="New respelling" placeholder="shkee-ah" value={addSays}
+            onChange={(e) => setAddSays(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (!addWord.trim() || !addSays.trim()) return;
+                commit([...rows, [addWord.trim(), addSays.trim()]]);
+                setAddWord("");
+                setAddSays("");
+              }
+            }} />
+          <button className="sb-btn sb-btn-sm" type="button" onClick={() => {
+            if (!addWord.trim() || !addSays.trim()) return;
+            commit([...rows, [addWord.trim(), addSays.trim()]]);
+            setAddWord("");
+            setAddSays("");
+          }}>Add</button>
+        </div>
+        {Object.keys(defaults).length > 0 && (
+          <button className="sb-btn sb-btn-sm" type="button" onClick={() => onChange({ ...defaults })}>
+            Reset to defaults
+          </button>
+        )}
+        <Field label="Try a word or line" hint={sample.trim() ? `Will say “${spoken}”.` : "Type a word from the list, or a whole sentence."}>
+          <div className="sb-row">
+            <input className="sb-input" value={sample} aria-label="Line to preview"
+              onChange={(e) => setSample(e.target.value)} />
+            <button className="sb-btn" type="button" disabled={testing || dirty || !sample.trim()}
+              onClick={() => onSpeak(sample.trim())}>
+              {testing ? "Speaking…" : "Speak this"}
+            </button>
+          </div>
+        </Field>
+        {dirty && <p className="sb-hint">Save first. Speak this uses the saved map, speakers, and voice.</p>}
+      </div>
+    </details>
   );
 }
 

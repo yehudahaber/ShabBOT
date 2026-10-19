@@ -35,6 +35,7 @@ from .core.announcements import (
     options_from_settings,
     plan_announcements,
 )
+from .core.pronounce import coerce_pronunciations
 from .manager import ShabbotManager
 from .store import new_id
 
@@ -185,6 +186,7 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("announce_shkia_final_min"): vol.All(vol.Coerce(int), vol.Range(min=0, max=180)),
     vol.Optional("announce_groups"): _as_vol(lambda v: coerce_groups(v, strict=True)),
     vol.Optional("announce_templates"): _as_vol(lambda v: coerce_templates(v, strict=True)),
+    vol.Optional("announce_pronunciations"): _as_vol(coerce_pronunciations),
 })
 
 
@@ -515,11 +517,11 @@ async def ws_announce_test(hass, connection, msg) -> None:
     """Speak one sentence now, so the chosen players and TTS engine can be checked."""
     m = _mgr(hass)
     try:
-        await m.announcer.async_speak_test(msg.get("message"))
+        spoken = await m.announcer.async_speak_test(msg.get("message"))
     except ServiceValidationError as err:
         connection.send_error(msg["id"], "invalid", str(err))
         return
-    connection.send_result(msg["id"], {"dry_run": bool(m.settings.get("dry_run"))})
+    connection.send_result(msg["id"], {"dry_run": bool(m.settings.get("dry_run")), "spoken": spoken})
 
 
 @websocket_api.websocket_command({

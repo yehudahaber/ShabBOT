@@ -364,3 +364,65 @@ async def test_routines_reorder(hass: HomeAssistant, manager: ShabbotManager, ha
     assert res["result"] == list(manager.config["routines"]) == [ids[1], ids[0], *ids[2:]]
     await client.send_json_auto_id({"type": "shabbot/config"})
     assert (await client.receive_json())["result"]["config"]["routine_order"] == res["result"]
+
+
+async def test_prerendered_clip_plays_and_a_missing_clip_uses_live_tts(
+        hass: HomeAssistant, manager: ShabbotManager) -> None:
+    """Saved volume still applies. Sonos gets the file; live TTS is only the fallback."""
+    import io
+    import wave
+
+    from custom_components.shabbot.prerender import ClipLibrary, media_directory
+
+    played: list[dict] = []
+    spoken: list[dict] = []
+    volumes: list[float] = []
+
+    async def _play(call) -> None:
+        played.append(dict(call.data))
+
+    async def _speak(call) -> None:
+        spoken.append(dict(call.data))
+
+    async def _volume(call) -> None:
+        volumes.append(call.data["volume_level"])
+
+    hass.services.async_register("media_player", "play_media", _play)
+    hass.services.async_register("tts", "speak", _speak)
+    hass.services.async_register("media_player", "volume_set", _volume)
+
+    manager.settings.update({
+        "announce_enabled": True,
+        "announce_players": ["media_player.kitchen"],
+        "announce_tts_entity": "tts.piper",
+        "announce_voice": "en_US-lessac-high",
+        "announce_volume": 65,
+        "dry_run": True,
+    })
+    heard = await manager.announcer.async_speak_test("Shkia")
+    assert heard == "shkee-ah"
+    assert manager.store.activity[-1]["message"] == "Dry run: Shkia"
+    assert not played
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000)
+    ClipLibrary(media_directory(hass)).store(
+        "tts.piper", "en_US-lessac-high", "", "shkee-ah", buffer.getvalue(),
+    )
+    manager.settings["dry_run"] = False
+    await manager.announcer.async_speak_test("shkia")
+    await hass.async_block_till_done()
+    assert volumes == [0.65]
+    assert played and played[0]["media_content_id"].startswith("media-source://media_source/local/shabbot/")
+    assert played[0]["announce"] is True
+    assert played[0]["entity_id"] == ["media_player.kitchen"]
+    assert not spoken
+
+    await manager.announcer.async_speak_test("a line with no recording")
+    await hass.async_block_till_done()
+    assert spoken and spoken[-1]["message"] == "a line with no recording"
+    assert spoken[-1]["options"] == {"voice": "en_US-lessac-high"}

@@ -1031,6 +1031,22 @@ button.sb-list-item:hover {
   font-size: 13px;
 }
 
+.sb-pron-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.4fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.sb-pron-says {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sb-narrow .sb-pron-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .sb-advanced {
   border-top: 1px solid var(--border);
   padding-top: 4px;
