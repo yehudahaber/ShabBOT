@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from .core.announcements import ANNOUNCE_DEFAULTS
+from .voice.announcements import ANNOUNCE_DEFAULTS
+from .voice.briefing import BRIEFING_DEFAULTS
 
 DOMAIN: Final = "shabbot"
 NAME: Final = "ShabBOT"
-VERSION: Final = "0.2.5-announce.3"
+VERSION: Final = "0.2.5-announce.4"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_CONFIG: Final = f"{DOMAIN}.config"
@@ -47,6 +48,7 @@ DEFAULT_SETTINGS: Final = {
     "notify_service": "",
     "notify_overrides": True,
     **ANNOUNCE_DEFAULTS,
+    **BRIEFING_DEFAULTS,
 }
 
 # Home-specific values. Export/import copies minhag and templates, not another house's devices.
@@ -58,6 +60,8 @@ EXPORT_SKIP_SETTINGS: Final = (
     "announce_tts_entity",
     "announce_voice",
     "announce_player_leads",
+    "briefing_weather_entity",
+    "briefing_notes_entity",
 )
 
 DEFAULT_DEVICE: Final = {

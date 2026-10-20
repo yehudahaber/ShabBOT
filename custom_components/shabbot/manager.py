@@ -21,10 +21,10 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.util import dt as dt_util
 
-from .announcer import Announcer
 from .const import PLAN_HORIZON_DAYS, POLL_SECONDS, SIGNAL_ACTIVITY, SIGNAL_UPDATE
 from .core import astro, dayinfo, gestures, jcal, planner
 from .store import ShabbotStore, device_config
+from .voice.announcer import Announcer
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -116,11 +116,21 @@
     },
     "get_day_info": {
       "name": "Get the day's Jewish calendar",
-      "description": "Hebrew date, parasha, Daf Yomi, zmanim, and a short sentence for a speaker. Leave the date empty for right now (the Hebrew date moves at shkia). A date uses that civil day's daytime.",
+      "description": "Hebrew date, parasha, Daf Yomi, and zmanim as structured data, plus a short summary. Leave the date empty for right now (the Hebrew date moves at shkia). A date uses that civil day's daytime.",
       "fields": {
         "date": {
           "name": "Date",
           "description": "Civil date (YYYY-MM-DD). Empty means now, and the Hebrew day begins at shkia."
+        }
+      }
+    },
+    "get_daily_briefing": {
+      "name": "Kids' daily briefing",
+      "description": "One spoken script for kids: Hebrew date, parasha or holiday, Daf Yomi, shkia, candle lighting or havdalah, a countdown, the weather entity you picked, and a note from home. The voice module has to be on. Nothing is read from the web.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "Civil date (YYYY-MM-DD). Empty means right now."
         }
       }
     }

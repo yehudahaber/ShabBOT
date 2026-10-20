@@ -24,13 +24,15 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.util import dt as dt_util
 
-from .const import PLAN_HORIZON_DAYS
-from .core import announcements, jcal
-from .core.pronounce import apply_pronunciation
+from ..const import PLAN_HORIZON_DAYS
+from ..core import jcal
+from . import announcements
+from .gate import voice_module_enabled
 from .prerender import Clip, ClipLibrary, media_directory, synthesize, tts_ready
+from .pronounce import apply_pronunciation
 
 if TYPE_CHECKING:
-    from .manager import ShabbotManager
+    from ..manager import ShabbotManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +72,8 @@ class Announcer:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        if not voice_module_enabled(self._m.settings):
+            return
         options = announcements.options_from_settings(self._m.settings)
         if not options.enabled:
             return
@@ -90,7 +94,9 @@ class Announcer:
             self._m.location,
             self._m.minhag,
         )
-        events = announcements.plan_announcements(blocks, self._m.minhag, options)
+        events = announcements.plan_announcements(
+            blocks, self._m.minhag, options, location=self._m.location,
+        )
         calls = announcements.schedule_announcements(
             events,
             players=options.players,
@@ -130,6 +136,10 @@ class Announcer:
 
         Returns the text actually sent to TTS, after the pronunciation map.
         """
+        if not voice_module_enabled(self._m.settings):
+            raise ServiceValidationError(
+                "The voice module is turned off. Turn it on in ShabBOT settings to speak.",
+            )
         options = announcements.options_from_settings(self._m.settings)
         if not options.players:
             raise ServiceValidationError("Choose at least one media player")

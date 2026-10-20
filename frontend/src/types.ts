@@ -106,6 +106,7 @@ export interface Settings {
   storm_window_min: number;
   notify_service: string;
   notify_overrides: boolean;
+  voice_enabled: boolean;
   announce_enabled: boolean;
   announce_players: string[];
   announce_tts_entity: string;
@@ -121,6 +122,10 @@ export interface Settings {
   announce_groups: AnnounceGroups;
   announce_templates: AnnounceTemplates;
   announce_pronunciations: Record<string, string>;
+  briefing_template: string;
+  briefing_weather_entity: string;
+  briefing_notes_entity: string;
+  briefing_notes_until: string;
 }
 
 export interface AnnounceGroups {

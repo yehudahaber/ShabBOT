@@ -21,11 +21,11 @@ Shabbat & Yom Tov automation for Home Assistant. Home Assistant stays the hub fo
 
 ### Install the announcements pre-release
 
-Announcements and the Jewish-calendar sensors are a pre-release on the fork [yehudahaber/ShabBOT](https://github.com/yehudahaber/ShabBOT), tag `v0.2.5-announce.3`. They are not an upstream release.
+Announcements, the kids' daily briefing, and the Jewish-calendar sensors are a pre-release on the fork [yehudahaber/ShabBOT](https://github.com/yehudahaber/ShabBOT), tag `v0.2.5-announce.4`. They are not an upstream release.
 
 1. HACS → ⋮ → **Custom repositories** → `https://github.com/yehudahaber/ShabBOT`, category **Integration**. If ShabBOT from another repository is already installed, remove that copy first — both write `custom_components/shabbot`.
-2. Open the repository in HACS and turn on **Show beta** (pre-releases are hidden until then). Download **v0.2.5-announce.3**. HACS fetches `shabbot.zip` from that release.
-3. Restart Home Assistant. **Settings → Devices & services → Add integration → ShabBOT**, then open **ShabBOT** in the sidebar → **Settings → Announcements**. The Hebrew date, parasha, Daf Yomi, and zmanim show up as sensors without any extra setup.
+2. Open the repository in HACS and turn on **Show beta** (pre-releases are hidden until then). Download **v0.2.5-announce.4**. HACS fetches `shabbot.zip` from that release.
+3. Restart Home Assistant. **Settings → Devices & services → Add integration → ShabBOT**, then open **ShabBOT** in the sidebar → **Settings → Voice**. The Hebrew date, parasha, Daf Yomi, and zmanim show up as sensors without any extra setup. The voice module stays off on a new install. A home that already had announcements turned on keeps it on.
 
 Requires Home Assistant 2026.9.0 or newer, the same as upstream ShabBOT. Pre-rendered clips are written to Home Assistant's local media folder (`config/media` on Container and Core, `/media` on Home Assistant OS) so Sonos can fetch them.
 
@@ -60,9 +60,13 @@ Available zmanim: `alot`, `sunrise`, `chatzot`, `mincha_gedola`, `plag`, `candle
 
 **Early Shabbat (summer)**: Settings → Early Shabbat lights candles at a fixed time (e.g. 7:00 PM) on Fridays when the normal time would be later than a cutoff (e.g. 7:15 PM), never before plag hamincha, and only on a plain Shabbat (not when it is also Yom Tov). Device protection starts at the early time, and routine rows written with `candle_lighting` move with it; rows written with `sunset` don't, so prefer `candle_lighting` for anything tied to the start of Shabbat.
 
-## Announcements
+## Voice module
 
-Settings → Announcements speaks a short sentence on the media players you pick, using a TTS engine and an optional voice. It starts off. Each announcement (candle countdown, shkia countdown, the final warning, motzaei, and next-meal preparation) has its own switch. **Dry run** logs the sentence on the Activity tab instead of speaking. `shabbot.announce` (or **Speak a test** in the panel) says one sentence immediately. **Speak this** under Pronunciation says one word or line with the current respelling. The panel lists the next few times so you can check the schedule before it runs.
+Announcements and the kids' daily briefing live in `custom_components/shabbot/voice/`. That package is optional. Core ShabBOT (`core/`) is the calendar and the device rules: Hebrew date, zmanim, parasha, Daf Yomi, issur melacha, and the schedules that use them. `shabbot.get_day_info` stays on the core and returns structured facts. HACS allows one integration per repository, so the voice module stays inside ShabBOT rather than becoming a second integration.
+
+**Settings → Voice** turns the module on. It is off on a new install. A home that already had **Speak announcements** on keeps the module on after updating. With the module off, nothing is scheduled to speak and `shabbot.get_daily_briefing` refuses. The sensors, `get_day_info`, and device protection keep working.
+
+Settings → Voice speaks a short sentence on the media players you pick, using a TTS engine and an optional voice. Speaking itself also has a switch, so the module can be on for the kids' briefing without the countdowns. Each announcement (candle countdown, shkia countdown, the final warning, motzei Shabbat, and next-meal preparation) has its own switch, its minute marks, and its wording, with **Reset wording** to put the default sentence back. **Dry run** logs the sentence on the Activity tab instead of speaking. `shabbot.announce` (or **Speak a test** in the panel) says one sentence immediately. **Speak this** under Pronunciation says one word or line with the current respelling. The panel lists the next few times so you can check the schedule before it runs.
 
 **Voice.** The engine and an optional voice are on the announcements card. Leave the voice blank for the engine default. Piper Lessac high is `en_US-lessac-high`. Kokoro af_heart on the sherpa/Wyoming engine (`tts.sherpa_onnx_offline_tts`) is voice `3`. The list also offers whatever voices that engine reports.
 
@@ -72,22 +76,28 @@ Settings → Announcements speaks a short sentence on the media players you pick
 
 | When | Default |
 |---|---|
-| Before candle lighting | 60, 30, 15 and 5 minutes: "60 minutes until candle lighting" |
-| After candle lighting, before shkia | the same marks, but only the ones that fall after candles are lit, then a final warning 1 minute before shkia: "Shkia in one minute. Stop all melacha." |
-| Havdalah | "It's now 60 minutes after shkia and it's muttar to do melacha." On Shabbat the number is the Shabbat havdalah setting (or the real sun-angle gap). On a Yom Tov that is not Shabbat it is the Yom Tov end setting. |
+| Before candle lighting | 60, 30, 15 and 5 minutes: "About an hour until candle lighting, at 6:08." The minutes round the way a person would say them ("about twenty minutes", "about half an hour"). The clock is "at 6:08", "at six", or "a little after six". |
+| After candle lighting, before shkia | the same marks, but only the ones that fall after candles are lit: "About fifteen minutes until shkia." Then a final warning 1 minute before shkia: "Shkia is in about a minute. Time to stop all melacha." |
+| Havdalah | "It's motzei Shabbat. Havdalah is about an hour after shkia, and melacha is permitted." On a Yom Tov that is not Shabbat, the name is that Yom Tov ("It's motzei Pesach I."). The length is the Shabbat havdalah setting (or the real sun-angle gap) on Shabbat, and the Yom Tov end setting otherwise. |
 
 **Yom Tov sequences.** "Muttar" is said only when issur melacha actually ends (the end of the whole Shabbat/Yom Tov block), never on a night that is still inside it.
 
 - **First night** of Shabbat or Yom Tov, including an early Shabbat: countdown to candle lighting, then countdown to shkia. Early Shabbat moves the candle countdown to the early time; the shkia warning stays on the real sunset.
 - **Yom Tov into Shabbat** (for example Friday night of a Yom Tov that continues into Shabbat): candles are lit before shkia, so the ordinary candle and shkia warnings run. There is no "muttar" that afternoon.
-- **Second Yom Tov night that is not Shabbat**: the previous day has ended, so you may start preparing for the next meal. There is no shkia countdown and no "stop all melacha". Its own minute marks (60, 30, 15 and 5 by default) count down to that time ("30 minutes until you can start preparing for the next meal") and one sentence fires when preparation may begin. Turning off the candle-lighting countdown does not turn this off. After a Shabbat, the time is Shabbat havdalah. After a Yom Tov day, it is the Yom Tov end setting (default 42 minutes after shkia; 42, 50, 60, 72, or a custom value). That setting is global: device schedules use the same end.
+- **Second Yom Tov night that is not Shabbat**: the previous day has ended, so you may start getting the next meal ready. There is no shkia countdown and no "stop all melacha". Its own minute marks (60, 30, 15 and 5 by default) count down to that time ("About half an hour until you can start getting the next meal ready.") and one sentence fires when preparation may begin ("You can start getting the next meal ready now."). Turning off the candle-lighting countdown does not turn this off. After a Shabbat, the time is Shabbat havdalah. After a Yom Tov day, it is the Yom Tov end setting (default 42 minutes after shkia; 42, 50, 60, 72, or a custom value). That setting is global: device schedules use the same end.
 - **Shabbat into Yom Tov** (for example Rosh Hashana starting on Shabbat): Saturday night is next-meal preparation at Shabbat havdalah, not a second candle lighting. The block then ends on Yom Tov, so motzaei uses the Yom Tov end offset.
 
 **Lead.** A global offset in seconds, with an optional per-player override, fires the trigger that early so speaker buffering (Sonos is often several seconds) lands on the nominal time. The stop-melacha warning adds the pre-rendered clip length on top of that lead, so the sentence ends on the mark. `0` means the other announcements start exactly on time. A moment that was missed while Home Assistant was down is not spoken late.
 
 **Volume.** An optional percentage is applied before the sentence and put back after it. Sonos players use snapshot/restore, so the previous playback returns as well. Other players only get their previous volume restored.
 
-Templates accept `{minutes}`, `{unit}` (minute/minutes), `{minutes_words}` ("one minute"), `{occasion}`, and `{title}`. Leave a template blank to skip that sentence.
+Each wording is a template. Placeholders: `{minutes}`, `{time}` ("at 6:08" or "a little after six"), `{about}` ("about twenty minutes"), `{parasha}`, `{hebrew_date}`, `{daf}`, `{zman_name}`, plus `{unit}`, `{minutes_words}`, `{occasion}`, and `{title}`. `{About}` is the same phrase with a capital letter. Leave a wording blank to skip that sentence. **Reset wording** puts the default back. A saved copy of an older default sentence is upgraded; a sentence you rewrote is kept.
+
+### Kids' daily briefing
+
+`shabbot.get_daily_briefing` returns one spoken script. It needs the voice module on. The default is warm and short: Hebrew date, the parasha (or the holiday reading, and a holiday coming up this week), Daf Yomi, shkia, candle lighting or havdalah when that evening has them, and how soon Shabbat or Yom Tov starts.
+
+Weather is optional. Pick one `weather.*` entity. ShabBOT reads its condition and the numeric high, low, and precipitation chance. It does not read a written forecast, and it does not go to the web. Notes are optional too: one `todo.*` list (items drop off after their due date; completed items are skipped) or one `input_text.*` helper with an optional "hide after" date. If weather or notes are not set, that part of the sentence is left out and the rest still makes sense. The wording is editable, with the same reset. Placeholders: `{hebrew_date}`, `{reading}`, `{parasha}`, `{daf}`, `{zmanim}`, `{countdown}`, `{weather}`, `{notes}`.
 
 Players, the TTS engine, the voice, and per-player leads are not included in Export / Import (they belong to one home). The minute marks, templates, pronunciation map, and lead are.
 
@@ -140,7 +150,7 @@ ShabBOT can answer "what day is it?" for a dashboard, a voice assistant, or a ph
 
 **Daf Yomi** is the Bavli daf for that Hebrew day: masechet and daf, in English (`Bechoros 32`) and Hebrew.
 
-`shabbot.get_day_info` returns the same facts as JSON, plus `summary`, a short sentence for a speaker. Leave `date` empty for right now. Pass a civil `date` (`2026-10-20`) for that day's daytime, with no shkia rollover.
+`shabbot.get_day_info` returns the same facts as JSON, plus `summary`, a short factual sentence. Leave `date` empty for right now. Pass a civil `date` (`2026-10-20`) for that day's daytime, with no shkia rollover. The kids' script is a separate action, `shabbot.get_daily_briefing`, and only when the voice module is on.
 
 ## Entities & actions
 
@@ -158,7 +168,7 @@ ShabBOT can answer "what day is it?" for a dashboard, a voice assistant, or a ph
 | `select.shabbot_mode` | Normal / your modes (selecting one starts it today, open-ended) |
 | `switch.shabbot_device_protection`, `switch.shabbot_dry_run` | |
 
-Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_routine`, `shabbot.skip_slot`, `shabbot.reconcile`, `shabbot.announce`, `shabbot.get_day_info`.
+Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_routine`, `shabbot.skip_slot`, `shabbot.reconcile`, `shabbot.announce`, `shabbot.get_day_info`, `shabbot.get_daily_briefing`.
 
 `get_day_info` takes an optional `date` and returns:
 
@@ -171,6 +181,19 @@ Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_rou
 | `summary` | one spoken sentence: Hebrew date, parasha, Daf Yomi, and the next key times (sunrise, sof zman Shema, candle lighting, shkia, havdalah) |
 | `israel` | whether the Israel checkbox is on |
 | `rollover` | `shkia` for "right now", `daytime` when a date was passed |
+
+`get_daily_briefing` takes an optional `date` and returns:
+
+| Field | |
+|---|---|
+| `script` | the one sentence to speak |
+| `hebrew_date`, `parasha`, `daf` | the same facts, as short text |
+| `countdown` | for example `Shabbat is in three days.` |
+| `zmanim_sentence` | shkia, and candle lighting or havdalah when they apply |
+| `weather` | the weather sentence, or null when no weather entity is set |
+| `notes` | the parental lines that are still current, or an empty list |
+
+A Tuesday morning in Brooklyn, with no weather and no note, sounds like: "Good morning. Today is 9 Cheshvan 5787. This week's parasha is Lech-Lecha. Daf Yomi is Bechoros, daf 32. Shkia is at 6:08. Shabbat is in three days."
 
 ## Moving over from SmartThings / Lutron / Node-RED
 

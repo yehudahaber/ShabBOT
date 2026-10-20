@@ -24,7 +24,9 @@ from .const import (
     VERSION,
 )
 from .core import gestures, jcal, planner, timeexpr
-from .core.announcements import (
+from .manager import ShabbotManager
+from .store import new_id
+from .voice.announcements import (
     coerce_groups,
     coerce_lead,
     coerce_marks,
@@ -35,9 +37,9 @@ from .core.announcements import (
     options_from_settings,
     plan_announcements,
 )
-from .core.pronounce import coerce_pronunciations
-from .manager import ShabbotManager
-from .store import new_id
+from .voice.briefing import coerce_briefing_template
+from .voice.gate import voice_module_enabled
+from .voice.pronounce import coerce_pronunciations
 
 PARTS = ["night", "day", "block"]
 STATES = ["on", "off"]
@@ -172,6 +174,7 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("storm_window_min"): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
     vol.Optional("notify_service"): vol.Any(None, str),
     vol.Optional("notify_overrides"): bool,
+    vol.Optional("voice_enabled"): bool,
     vol.Optional("announce_enabled"): bool,
     vol.Optional("announce_players"): _as_vol(lambda v: list(coerce_players(v))),
     vol.Optional("announce_tts_entity"): vol.Any(None, str),
@@ -187,6 +190,10 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("announce_groups"): _as_vol(lambda v: coerce_groups(v, strict=True)),
     vol.Optional("announce_templates"): _as_vol(lambda v: coerce_templates(v, strict=True)),
     vol.Optional("announce_pronunciations"): _as_vol(coerce_pronunciations),
+    vol.Optional("briefing_template"): _as_vol(lambda v: coerce_briefing_template(v, strict=True)),
+    vol.Optional("briefing_weather_entity"): vol.Any(None, str),
+    vol.Optional("briefing_notes_entity"): vol.Any(None, str),
+    vol.Optional("briefing_notes_until"): vol.Any(None, str),
 })
 
 
@@ -548,13 +555,16 @@ async def ws_announce_upcoming(hass, connection, msg) -> None:
         m.location,
         m.minhag,
     )
-    events = plan_announcements(blocks, m.minhag, options)
+    events = plan_announcements(blocks, m.minhag, options, location=m.location)
     items = [
         {"at": event.nominal_at.isoformat(), "kind": event.kind, "message": event.message, "minutes": event.minutes}
         for event in events
         if event.nominal_at > now
     ][:8]
-    connection.send_result(msg["id"], {"enabled": options.enabled, "items": items})
+    connection.send_result(msg["id"], {
+        "enabled": voice_module_enabled(settings) and options.enabled,
+        "items": items,
+    })
 
 
 @websocket_api.websocket_command({

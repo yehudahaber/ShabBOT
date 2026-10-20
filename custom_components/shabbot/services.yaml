@@ -54,3 +54,9 @@ get_day_info:
       example: "2026-10-20"
       selector:
         date:
+get_daily_briefing:
+  fields:
+    date:
+      example: "2026-10-20"
+      selector:
+        date:

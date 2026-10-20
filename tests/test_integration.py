@@ -108,6 +108,7 @@ async def test_announcement_dry_run_logs_at_the_lead_adjusted_time(
         hass: HomeAssistant, manager: ShabbotManager, freezer: FrozenDateTimeFactory) -> None:
     block, _sunset = _block_times(manager)
     manager.settings.update({
+        "voice_enabled": True,
         "announce_enabled": True,
         "announce_players": ["media_player.kitchen"],
         "announce_tts_entity": "tts.google_en_com",
@@ -122,7 +123,10 @@ async def test_announcement_dry_run_logs_at_the_lead_adjusted_time(
     assert not any(e["kind"] == "announce" for e in manager.store.activity)
     await _advance(hass, freezer, fire + timedelta(seconds=1))
     logged = [e for e in manager.store.activity if e["kind"] == "announce"]
-    assert logged and logged[-1]["message"] == "Dry run: 60 minutes until candle lighting"
+    from custom_components.shabbot.voice.wording import natural_time
+    assert logged and logged[-1]["message"] == (
+        f"Dry run: About an hour until candle lighting, {natural_time(block.start)}."
+    )
     assert logged[-1]["entity_id"] == "media_player.kitchen"
 
 
@@ -372,7 +376,7 @@ async def test_prerendered_clip_plays_and_a_missing_clip_uses_live_tts(
     import io
     import wave
 
-    from custom_components.shabbot.prerender import ClipLibrary, media_directory
+    from custom_components.shabbot.voice.prerender import ClipLibrary, media_directory
 
     played: list[dict] = []
     spoken: list[dict] = []
@@ -392,6 +396,7 @@ async def test_prerendered_clip_plays_and_a_missing_clip_uses_live_tts(
     hass.services.async_register("media_player", "volume_set", _volume)
 
     manager.settings.update({
+        "voice_enabled": True,
         "announce_enabled": True,
         "announce_players": ["media_player.kitchen"],
         "announce_tts_entity": "tts.piper",
@@ -447,11 +452,11 @@ async def test_prerender_file_io_stays_off_the_event_loop(
     import homeassistant.block_async_io as block_async_io
     from homeassistant.util.loop import _PREVIOUSLY_REPORTED
 
-    from custom_components.shabbot import announcer as announcer_mod
     from custom_components.shabbot.const import PLAN_HORIZON_DAYS
-    from custom_components.shabbot.core import announcements, jcal
-    from custom_components.shabbot.core.pronounce import apply_pronunciation
-    from custom_components.shabbot.prerender import ClipLibrary, media_directory
+    from custom_components.shabbot.core import jcal
+    from custom_components.shabbot.voice import announcements, announcer as announcer_mod
+    from custom_components.shabbot.voice.prerender import ClipLibrary, media_directory
+    from custom_components.shabbot.voice.pronounce import apply_pronunciation
 
     def _wav(seconds: float) -> bytes:
         rate = 16000
@@ -464,6 +469,7 @@ async def test_prerender_file_io_stays_off_the_event_loop(
         return buffer.getvalue()
 
     manager.settings.update({
+        "voice_enabled": True,
         "announce_enabled": True,
         "announce_players": ["media_player.kitchen"],
         "announce_tts_entity": "tts.piper",

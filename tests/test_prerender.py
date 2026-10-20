@@ -4,7 +4,7 @@ import io
 from pathlib import Path
 import wave
 
-from custom_components.shabbot.prerender import ClipLibrary, _mp3_seconds, audio_seconds, sniff_extension
+from custom_components.shabbot.voice.prerender import ClipLibrary, _mp3_seconds, audio_seconds, sniff_extension
 
 
 def _wav(seconds: float, rate: int = 16000) -> bytes:

@@ -180,7 +180,7 @@ export function SettingsPage() {
       </div>
 
       <AnnouncementsCard draft={draft} set={set} dirty={dirty} dryRun={draft.dry_run} onNotice={setNotice}
-        defaultPronunciations={data.meta.default_settings?.announce_pronunciations} />
+        defaults={data.meta.default_settings} />
 
       <SaveBar dirty={dirty} saving={saving} error={error} onSave={save} onReset={reset} />
 
