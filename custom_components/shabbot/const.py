@@ -6,10 +6,11 @@ from typing import Final
 
 from .voice.announcements import ANNOUNCE_DEFAULTS
 from .voice.briefing import BRIEFING_DEFAULTS
+from .voice.lexicon import LEXICON_DEFAULTS
 
 DOMAIN: Final = "shabbot"
 NAME: Final = "ShabBOT"
-VERSION: Final = "0.2.5-announce.4"
+VERSION: Final = "0.2.5-announce.5"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_CONFIG: Final = f"{DOMAIN}.config"
@@ -22,6 +23,7 @@ PANEL_ICON: Final = "shabbot:logo"
 
 SIGNAL_UPDATE: Final = f"{DOMAIN}_update"  # plan/status changed
 SIGNAL_ACTIVITY: Final = f"{DOMAIN}_activity"  # one activity entry
+EVENT_DAY_ROLLOVER: Final = "shabbot_day_rollover"
 
 ACTIVITY_MAX: Final = 2000
 PLAN_HORIZON_DAYS: Final = 60
@@ -49,6 +51,7 @@ DEFAULT_SETTINGS: Final = {
     "notify_overrides": True,
     **ANNOUNCE_DEFAULTS,
     **BRIEFING_DEFAULTS,
+    **LEXICON_DEFAULTS,
 }
 
 # Home-specific values. Export/import copies minhag and templates, not another house's devices.
@@ -62,6 +65,7 @@ EXPORT_SKIP_SETTINGS: Final = (
     "announce_player_leads",
     "briefing_weather_entity",
     "briefing_notes_entity",
+    "tts_lexicon_path",
 )
 
 DEFAULT_DEVICE: Final = {

@@ -73,6 +73,7 @@ const saved: Settings = {
   briefing_weather_entity: "weather.home",
   briefing_notes_entity: "",
   briefing_notes_until: "",
+  tts_lexicon_path: "",
 };
 
 const UPCOMING: AnnounceUpcoming["items"] = [

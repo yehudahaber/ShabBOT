@@ -21,10 +21,10 @@ Shabbat & Yom Tov automation for Home Assistant. Home Assistant stays the hub fo
 
 ### Install the announcements pre-release
 
-Announcements, the kids' daily briefing, and the Jewish-calendar sensors are a pre-release on the fork [yehudahaber/ShabBOT](https://github.com/yehudahaber/ShabBOT), tag `v0.2.5-announce.4`. They are not an upstream release.
+Announcements, the kids' daily briefing, and the Jewish-calendar sensors are a pre-release on the fork [yehudahaber/ShabBOT](https://github.com/yehudahaber/ShabBOT), tag `v0.2.5-announce.5`. They are not an upstream release.
 
 1. HACS → ⋮ → **Custom repositories** → `https://github.com/yehudahaber/ShabBOT`, category **Integration**. If ShabBOT from another repository is already installed, remove that copy first — both write `custom_components/shabbot`.
-2. Open the repository in HACS and turn on **Show beta** (pre-releases are hidden until then). Download **v0.2.5-announce.4**. HACS fetches `shabbot.zip` from that release.
+2. Open the repository in HACS and turn on **Show beta** (pre-releases are hidden until then). Download **v0.2.5-announce.5**. HACS fetches `shabbot.zip` from that release.
 3. Restart Home Assistant. **Settings → Devices & services → Add integration → ShabBOT**, then open **ShabBOT** in the sidebar → **Settings → Voice**. The Hebrew date, parasha, Daf Yomi, and zmanim show up as sensors without any extra setup. The voice module stays off on a new install. A home that already had announcements turned on keeps it on.
 
 Requires Home Assistant 2026.9.0 or newer, the same as upstream ShabBOT. Pre-rendered clips are written to Home Assistant's local media folder (`config/media` on Container and Core, `/media` on Home Assistant OS) so Sonos can fetch them.
@@ -70,9 +70,11 @@ Settings → Voice speaks a short sentence on the media players you pick, using 
 
 **Voice.** The engine and an optional voice are on the announcements card. Leave the voice blank for the engine default. Piper Lessac high is `en_US-lessac-high`. Kokoro af_heart on the sherpa/Wyoming engine (`tts.sherpa_onnx_offline_tts`) is voice `3`. The list also offers whatever voices that engine reports.
 
-**Pronunciation.** Hebrew and Yiddish words are respelled before TTS, as whole words, so Piper and Kokoro say “shkee-ah” for shkia instead of spelling the letters. The list is editable. Reset puts the defaults back. Removing a row leaves that word as written.
+**Pronunciation.** Before any announcement or briefing is sent to TTS, Hebrew and Yiddish words are respelled as whole words, ignoring case, so Piper and Kokoro say “shkee-ah” for shkia instead of spelling the letters. A built-in list covers zmanim, Hebrew months, parasha names, masechtot, and holidays. Rows in Settings → Voice override one word at a time and do not erase that list. An optional YAML file (Settings → Voice → Pronunciation file, for example `/config/tts_lexicon.yaml`) is applied last, so it extends or overrides both. A missing or invalid file is ignored. Set a word to itself in the file to have it spoken as written. Removing a row falls back to the built-in spelling. Sensors and the `text` field stay as written; `spoken` is the respelling.
 
-**Pre-rendered audio.** Once the day’s times are known — at startup, at the daily zmanim refresh (00:05), and again six hours before candle lighting — ShabBOT renders each upcoming sentence and stores it in `config/media/shabbot/`. At the mark it plays that file (`media-source://media_source/local/shabbot/…`) so Sonos is not waiting on synthesis. Changing the sentence, the voice, the language, or the pronunciation map renders again. If a file is missing, it speaks live. The stop-melacha clip is started early by its own length, plus the lead, so the sentence finishes one minute before shkia. Other countdowns still start on their mark. Sonos snapshot/restore and the announcement volume are unchanged.
+**Pre-rendered audio.** The wording is deterministic for a date and a time window: there is no random phrasing, and clock times round the same way every time (to the nearest minute; “about twenty minutes” rounds to five). A morning and an afternoon before shkia share one briefing. At shkia the Hebrew date rolls and the evening wording takes over until midnight. ShabBOT fires `shabbot_day_rollover` at civil midnight and at shkia, with `reason` (`midnight` or `shkia`), `text` / `spoken`, `briefing_text` / `briefing_spoken` (the calendar script, without live weather or notes), and `day` (the day-info snapshot for that window). An automation can render the audio once on that event and reuse it until the next one. Nothing is fired when Home Assistant starts.
+
+Once the day’s times are known — at startup, at the daily zmanim refresh (00:05), and again six hours before candle lighting — ShabBOT also renders each upcoming announcement and stores it in `config/media/shabbot/`. At the mark it plays that file (`media-source://media_source/local/shabbot/…`) so Sonos is not waiting on synthesis. Changing the sentence, the voice, the language, or the pronunciation map renders again. If a file is missing, it speaks live. The stop-melacha clip is started early by its own length, plus the lead, so the sentence finishes one minute before shkia. Other countdowns still start on their mark. Sonos snapshot/restore and the announcement volume are unchanged.
 
 | When | Default |
 |---|---|
@@ -95,11 +97,11 @@ Each wording is a template. Placeholders: `{minutes}`, `{time}` ("at 6:08" or "a
 
 ### Kids' daily briefing
 
-`shabbot.get_daily_briefing` returns one spoken script. It needs the voice module on. The default is warm and short: Hebrew date, the parasha (or the holiday reading, and a holiday coming up this week), Daf Yomi, shkia, candle lighting or havdalah when that evening has them, and how soon Shabbat or Yom Tov starts.
+`shabbot.get_daily_briefing` returns one spoken script. It needs the voice module on. The default is warm and short: Hebrew date, the parasha (or the holiday reading, and a holiday coming up this week), Daf Yomi, shkia, candle lighting or havdalah when that evening has them, and how soon Shabbat or Yom Tov starts. With no date, the calendar part is the morning window (08:00 local) until shkia, then the shkia window. `script` and `text` are the words as written. `spoken` is the same sentence after the pronunciation lexicon. Weather and notes are still read live, so they are left out of the rollover event’s cached briefing.
 
 Weather is optional. Pick one `weather.*` entity. ShabBOT reads its condition and the numeric high, low, and precipitation chance. It does not read a written forecast, and it does not go to the web. Notes are optional too: one `todo.*` list (items drop off after their due date; completed items are skipped) or one `input_text.*` helper with an optional "hide after" date. If weather or notes are not set, that part of the sentence is left out and the rest still makes sense. The wording is editable, with the same reset. Placeholders: `{hebrew_date}`, `{reading}`, `{parasha}`, `{daf}`, `{zmanim}`, `{countdown}`, `{weather}`, `{notes}`.
 
-Players, the TTS engine, the voice, and per-player leads are not included in Export / Import (they belong to one home). The minute marks, templates, pronunciation map, and lead are.
+Players, the TTS engine, the voice, per-player leads, and the pronunciation-file path are not included in Export / Import (they belong to one home). The minute marks, templates, pronunciation rows, and lead are.
 
 **Which routine runs** (most specific first):
 1. A choice made for that date on the calendar (a different routine, or *Skip this meal*).
@@ -150,7 +152,7 @@ ShabBOT can answer "what day is it?" for a dashboard, a voice assistant, or a ph
 
 **Daf Yomi** is the Bavli daf for that Hebrew day: masechet and daf, in English (`Bechoros 32`) and Hebrew.
 
-`shabbot.get_day_info` returns the same facts as JSON, plus `summary`, a short factual sentence. Leave `date` empty for right now. Pass a civil `date` (`2026-10-20`) for that day's daytime, with no shkia rollover. The kids' script is a separate action, `shabbot.get_daily_briefing`, and only when the voice module is on.
+`shabbot.get_day_info` returns the same facts as JSON, plus `summary`, a short factual sentence. `text` is that same sentence. `spoken` is it after the pronunciation lexicon, which is what to send to TTS. The sensors stay on the display spelling. Leave `date` empty for right now. Pass a civil `date` (`2026-10-20`) for that day's daytime, with no shkia rollover. The kids' script is a separate action, `shabbot.get_daily_briefing`, and only when the voice module is on.
 
 ## Entities & actions
 
@@ -178,7 +180,8 @@ Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_rou
 | `parasha` | `english`, `hebrew`, `kind` (`parasha` or `holiday`), `shabbat`, plus the holiday name when there is one |
 | `daf_yomi` | `english`, `hebrew`, `masechet`, `masechet_hebrew`, `daf` |
 | `zmanim` | ISO timestamps for each zman; `candle_lighting` and `havdalah` are null when they don't apply. `havdalah_kind` is `shabbat` or `yom_tov` |
-| `summary` | one spoken sentence: Hebrew date, parasha, Daf Yomi, and the next key times (sunrise, sof zman Shema, candle lighting, shkia, havdalah) |
+| `summary`, `text` | one factual sentence, as written: Hebrew date, parasha, Daf Yomi, and the next key times (sunrise, sof zman Shema, candle lighting, shkia, havdalah) |
+| `spoken` | `text` after the pronunciation lexicon |
 | `israel` | whether the Israel checkbox is on |
 | `rollover` | `shkia` for "right now", `daytime` when a date was passed |
 
@@ -186,7 +189,9 @@ Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_rou
 
 | Field | |
 |---|---|
-| `script` | the one sentence to speak |
+| `script`, `text` | the one sentence, as written |
+| `spoken` | `text` after the pronunciation lexicon |
+| `window` | `morning` (08:00 until shkia), `shkia` (from sunset), or `daytime` (a date was passed) |
 | `hebrew_date`, `parasha`, `daf` | the same facts, as short text |
 | `countdown` | for example `Shabbat is in three days.` |
 | `zmanim_sentence` | shkia, and candle lighting or havdalah when they apply |

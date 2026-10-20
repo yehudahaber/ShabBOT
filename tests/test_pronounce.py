@@ -63,10 +63,16 @@ def test_defaults_cover_template_words_and_every_holiday_name() -> None:
         assert _say(name) != name, name
 
 
-def test_user_map_replaces_defaults_instead_of_merging() -> None:
+def test_saved_rows_are_stored_alone_and_overlay_the_builtin_lexicon() -> None:
+    """The settings field stays the rows the user edited. Speech still keeps every other built-in word."""
+    from custom_components.shabbot.voice.lexicon import speak
+
     options = options_from_settings({"announce_pronunciations": {"Shkia": "SHEE-kee-ah"}})
     assert options.pronunciations == {"shkia": "SHEE-kee-ah"}
     assert apply_pronunciation("shkia and melacha", options.pronunciations) == "SHEE-kee-ah and melacha"
+    assert speak("shkia and melacha", {"announce_pronunciations": {"Shkia": "SHEE-kee-ah"}}) == (
+        "SHEE-kee-ah and meh-lah-khah"
+    )
 
     missing = options_from_settings({})
     assert missing.pronunciations["shkia"] == "shkee-ah"

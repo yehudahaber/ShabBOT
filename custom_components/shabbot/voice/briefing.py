@@ -8,6 +8,10 @@ from one ``todo.*`` list or ``input_text.*`` entity. Nothing is fetched from
 the web, and forecast narrative text is ignored.
 
 Missing weather or notes are left out. The sentence still makes sense.
+
+"Right now" is snapped to a stable window so the calendar sentence can be
+cached: 08:00 local until shkia, then the shkia instant until midnight.
+A civil date stays that day's daytime. Weather and notes are still live.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from homeassistant.exceptions import ServiceValidationError
 from ..core import dayinfo, jcal
 from .announcements import render_template
 from .gate import voice_module_enabled
+from .lexicon import async_spoken
 from .wording import day_count, natural_time
 
 DEFAULT_BRIEFING_TEMPLATE = (
@@ -247,6 +252,30 @@ async def collect_notes(
     return lines
 
 
+def stable_briefing_moment(now: datetime, shkia: datetime | None) -> tuple[datetime, str]:
+    """The instant whose calendar wording stays put until the next boundary.
+
+    Before shkia that instant is 08:00 local, or one minute before shkia when
+    sunset is earlier than 08:00. At and after shkia it is shkia itself, so the
+    Hebrew date has already rolled.
+    """
+    if shkia is not None and now >= shkia:
+        return shkia, "shkia"
+    anchor = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    if shkia is not None and anchor >= shkia:
+        anchor = shkia - timedelta(minutes=1)
+    return anchor, "morning"
+
+
+def cacheable_briefing(settings: dict[str, Any], info: dayinfo.DayInfo) -> str:
+    """The calendar script with no weather and no notes, safe to cache all window."""
+    try:
+        template = coerce_briefing_template((settings or {}).get("briefing_template"))
+    except ValueError:
+        template = DEFAULT_BRIEFING_TEMPLATE
+    return render_briefing(info, template=template)
+
+
 def render_briefing(
     info: dayinfo.DayInfo,
     *,
@@ -277,12 +306,27 @@ async def async_daily_briefing(
     manager: Any,
     when: date | datetime | None = None,
 ) -> dict[str, Any]:
-    """The kids' briefing for right now, or for a civil date. Requires the voice module."""
+    """The kids' briefing for the current window, or for a civil date. Requires the voice module.
+
+    ``text`` is the sentence as written. ``spoken`` is what TTS should say.
+    With no ``when``, morning and afternoon of the same civil day share one script
+    until shkia. Passing a date keeps that civil day's daytime.
+    """
     if not voice_module_enabled(manager.settings):
         raise ServiceValidationError(
             "The voice module is turned off. Turn it on in ShabBOT settings to get the daily briefing.",
         )
-    info = manager.day_info(when)
+    if isinstance(when, datetime):
+        target: date | datetime = when
+        window = "moment"
+    elif isinstance(when, date):
+        target = when
+        window = "daytime"
+    else:
+        now = manager.now()
+        anchor, window = stable_briefing_moment(now, manager.day_info(now).time("shkia"))
+        target = anchor
+    info = manager.day_info(target)
     settings = manager.settings
     try:
         template = coerce_briefing_template(settings.get("briefing_template"))
@@ -302,6 +346,10 @@ async def async_daily_briefing(
     script = render_briefing(info, template=template, weather=weather, notes=note_lines)
     return {
         "script": script,
+        "text": script,
+        "spoken": await async_spoken(hass, script, settings),
+        "window": window,
+        "anchor": target.isoformat(),
         "hebrew_date": info.hebrew_date.english,
         "parasha": info.reading_english,
         "daf": f"{info.masechet}, daf {info.daf}",

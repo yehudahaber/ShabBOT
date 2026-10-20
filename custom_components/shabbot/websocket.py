@@ -194,6 +194,7 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("briefing_weather_entity"): vol.Any(None, str),
     vol.Optional("briefing_notes_entity"): vol.Any(None, str),
     vol.Optional("briefing_notes_until"): vol.Any(None, str),
+    vol.Optional("tts_lexicon_path"): vol.Any(None, str),
 })
 
 

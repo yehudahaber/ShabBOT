@@ -126,6 +126,7 @@ export interface Settings {
   briefing_weather_entity: string;
   briefing_notes_entity: string;
   briefing_notes_until: string;
+  tts_lexicon_path: string;
 }
 
 export interface AnnounceGroups {

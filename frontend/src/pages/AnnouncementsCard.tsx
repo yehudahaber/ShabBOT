@@ -231,6 +231,8 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
         value={draft.announce_pronunciations ?? {}}
         defaults={defaultPronunciations ?? {}}
         onChange={(v) => set("announce_pronunciations", v)}
+        lexiconPath={draft.tts_lexicon_path ?? ""}
+        onLexiconPath={(v) => set("tts_lexicon_path", v)}
         testing={testing}
         dirty={dirty}
         onSpeak={(line) => void testSpeak(line)}
@@ -561,10 +563,12 @@ function VoiceField({ engine, language, value, onChange }: {
   );
 }
 
-function PronunciationEditor({ value, defaults, onChange, testing, dirty, onSpeak }: {
+function PronunciationEditor({ value, defaults, onChange, lexiconPath, onLexiconPath, testing, dirty, onSpeak }: {
   value: Record<string, string>;
   defaults: Record<string, string>;
   onChange: (v: Record<string, string>) => void;
+  lexiconPath: string;
+  onLexiconPath: (v: string) => void;
   testing: boolean;
   dirty: boolean;
   onSpeak: (line: string) => void;
@@ -586,7 +590,7 @@ function PronunciationEditor({ value, defaults, onChange, testing, dirty, onSpea
       <summary>Pronunciation</summary>
       <div className="sb-stack">
         <p className="sb-hint">
-          Whole words, before the voice speaks. shkia is one word, “shkee-ah”, not “S-H KIA”. Piper and Kokoro both read these spellings.
+          Whole words, before the voice speaks. shkia is one word, “shkee-ah”, not “S-H KIA”. Piper and Kokoro both read these spellings. Months, parasha names, the daf, zmanim, and holidays are already in the built-in list. A row here overrides one of those words. Removing a row falls back to the built-in spelling. The preview below uses these rows; speaking also applies the built-in list and the file.
         </p>
         {rows.map(([word, says], index) => (
           <div className="sb-pron-row" key={index}>
@@ -626,6 +630,10 @@ function PronunciationEditor({ value, defaults, onChange, testing, dirty, onSpea
             Reset to defaults
           </button>
         )}
+        <Field label="Pronunciation file" hint="Optional YAML of extra words. Example: /config/tts_lexicon.yaml. Entries in the file override this list and the built-in words. Leave blank to skip the file. Set a word to itself to say it as written.">
+          <input className="sb-input" value={lexiconPath} placeholder="/config/tts_lexicon.yaml"
+            onChange={(e) => onLexiconPath(e.target.value)} />
+        </Field>
         <Field label="Try a word or line" hint={sample.trim() ? `Will say “${spoken}”.` : "Type a word from the list, or a whole sentence."}>
           <div className="sb-row">
             <input className="sb-input" value={sample} aria-label="Line to preview"

@@ -28,6 +28,7 @@ from ..const import PLAN_HORIZON_DAYS
 from ..core import jcal
 from . import announcements
 from .gate import voice_module_enabled
+from .lexicon import effective_lexicon, load_lexicon_file
 from .prerender import Clip, ClipLibrary, media_directory, synthesize, tts_ready
 from .pronounce import apply_pronunciation
 
@@ -64,6 +65,8 @@ class Announcer:
         self._generation = 0
         self._clips: dict[str, Clip] = {}
         self._clip_signature: tuple[str, str, str] | None = None
+        self._lexicon_path = ""
+        self._lexicon_file: dict[str, str] = {}
 
     def reschedule(self) -> None:
         """Rebuild timers from the current settings and calendar. Safe to call often."""
@@ -152,7 +155,8 @@ class Announcer:
 
     async def _speak(self, message: str, players: list[str], *, render_first: bool = False) -> str:
         options = announcements.options_from_settings(self._m.settings)
-        spoken = apply_pronunciation(message, options.pronunciations)
+        await self._refresh_lexicon_file()
+        spoken = apply_pronunciation(message, self._speech_map())
         if not players:
             return spoken
         if self._m.settings.get("dry_run"):
@@ -229,6 +233,13 @@ class Announcer:
         """Load the index off the loop, render anything missing, and reschedule when a length is new."""
         if generation != self._generation:
             return
+        before = self._speech_map()
+        await self._refresh_lexicon_file()
+        if generation != self._generation:
+            return
+        if self._speech_map() != before:
+            self.reschedule()
+            return
         try:
             loaded = await self._load_index(options)
         except OSError as err:
@@ -243,11 +254,10 @@ class Announcer:
             return
         if not tts_ready(self._m.hass):
             return
-        texts = list(dict.fromkeys(
-            apply_pronunciation(event.message, options.pronunciations) for event in events
-        ))
+        speech = self._speech_map()
+        texts = list(dict.fromkeys(apply_pronunciation(event.message, speech) for event in events))
         end_texts = {
-            apply_pronunciation(event.message, options.pronunciations)
+            apply_pronunciation(event.message, speech)
             for event in events
             if event.kind in announcements.END_ON_TIME_KINDS
         }
@@ -301,6 +311,22 @@ class Announcer:
         self._clips[text] = clip
         return True
 
+    def _speech_map(self) -> dict[str, str]:
+        """Lexicon for a turn that is already on the event loop. Does not read the YAML file."""
+        path = str(self._m.settings.get("tts_lexicon_path") or "").strip()
+        file_map = self._lexicon_file if path and self._lexicon_path == path else {}
+        return effective_lexicon(self._m.settings, file_map=file_map, allow_read=False)
+
+    async def _refresh_lexicon_file(self) -> None:
+        """Load ``tts_lexicon_path`` off the loop. An empty path does not touch the disk."""
+        path = str(self._m.settings.get("tts_lexicon_path") or "").strip()
+        if not path:
+            self._lexicon_path = ""
+            self._lexicon_file = {}
+            return
+        self._lexicon_file = await self._m.hass.async_add_executor_job(load_lexicon_file, path)
+        self._lexicon_path = path
+
     def _library(self) -> ClipLibrary:
         return ClipLibrary(media_directory(self._m.hass))
 
@@ -311,7 +337,7 @@ class Announcer:
         for event in events:
             if event.kind not in announcements.END_ON_TIME_KINDS:
                 continue
-            spoken = apply_pronunciation(event.message, options.pronunciations)
+            spoken = apply_pronunciation(event.message, self._speech_map())
             clip = self._clips.get(spoken)
             if clip and clip.seconds:
                 lengths[event.id] = clip.seconds

@@ -375,7 +375,7 @@ class DayInfo:
         return min(ahead, key=lambda item: item[1])
 
     def summary(self) -> str:
-        """A short sentence for TTS: Hebrew date, parasha, daf, and a few zmanim."""
+        """A short factual sentence. Sensors and ``text`` keep this spelling; TTS uses ``spoken``."""
         opener = f"{self.hebrew_date.english}." if self.moment is None else f"Today is {self.hebrew_date.english}."
         if self.reading_kind == "holiday":
             reading = f"This Shabbat the reading is {self.reading_english}."
