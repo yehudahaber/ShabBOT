@@ -19,6 +19,7 @@ class ShabbotEntity(Entity):
         self.manager = manager
         self._attr_unique_id = f"{DOMAIN}_{key}"
         self._attr_translation_key = key
+        self._attr_suggested_object_id = key
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, DOMAIN)},
             name=NAME,

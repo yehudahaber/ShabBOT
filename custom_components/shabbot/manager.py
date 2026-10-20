@@ -23,7 +23,7 @@ from homeassistant.util import dt as dt_util
 
 from .announcer import Announcer
 from .const import PLAN_HORIZON_DAYS, POLL_SECONDS, SIGNAL_ACTIVITY, SIGNAL_UPDATE
-from .core import astro, gestures, jcal, planner
+from .core import astro, dayinfo, gestures, jcal, planner
 from .store import ShabbotStore, device_config
 
 _LOGGER = logging.getLogger(__name__)
@@ -131,6 +131,10 @@ class ShabbotManager:
             early_shabbat_time=_hhmm(s.get("early_shabbat_time")) if s.get("early_shabbat") else None,
             early_shabbat_after=_hhmm(s.get("early_shabbat_after")) if s.get("early_shabbat") else None,
         )
+
+    def day_info(self, when: date | datetime | None = None) -> dayinfo.DayInfo:
+        """Hebrew date, parasha, Daf Yomi, and zmanim. Omit ``when`` for the current moment."""
+        return dayinfo.build_day_info(self.now() if when is None else when, self.location, self.minhag)
 
     def now(self) -> datetime:
         return dt_util.now().astimezone(self.location.tzinfo)

@@ -21,11 +21,11 @@ Shabbat & Yom Tov automation for Home Assistant. Home Assistant stays the hub fo
 
 ### Install the announcements pre-release
 
-Announcements are a pre-release on the fork [yehudahaber/ShabBOT](https://github.com/yehudahaber/ShabBOT), tag `v0.2.5-announce.2`. They are not an upstream release.
+Announcements and the Jewish-calendar sensors are a pre-release on the fork [yehudahaber/ShabBOT](https://github.com/yehudahaber/ShabBOT), tag `v0.2.5-announce.3`. They are not an upstream release.
 
 1. HACS → ⋮ → **Custom repositories** → `https://github.com/yehudahaber/ShabBOT`, category **Integration**. If ShabBOT from another repository is already installed, remove that copy first — both write `custom_components/shabbot`.
-2. Open the repository in HACS and turn on **Show beta** (pre-releases are hidden until then). Download **v0.2.5-announce.2**. HACS fetches `shabbot.zip` from that release.
-3. Restart Home Assistant. **Settings → Devices & services → Add integration → ShabBOT**, then open **ShabBOT** in the sidebar → **Settings → Announcements**.
+2. Open the repository in HACS and turn on **Show beta** (pre-releases are hidden until then). Download **v0.2.5-announce.3**. HACS fetches `shabbot.zip` from that release.
+3. Restart Home Assistant. **Settings → Devices & services → Add integration → ShabBOT**, then open **ShabBOT** in the sidebar → **Settings → Announcements**. The Hebrew date, parasha, Daf Yomi, and zmanim show up as sensors without any extra setup.
 
 Requires Home Assistant 2026.9.0 or newer, the same as upstream ShabBOT. Pre-rendered clips are written to Home Assistant's local media folder (`config/media` on Container and Core, `/media` on Home Assistant OS) so Sonos can fetch them.
 
@@ -111,6 +111,37 @@ Z-Wave note: Zooz switches send scene events only when *scene control* is enable
 
 "Also override these devices" lets a single switch's gesture release a whole room.
 
+## Jewish calendar
+
+ShabBOT can answer "what day is it?" for a dashboard, a voice assistant, or a phone briefing. The facts come from [hdate](https://github.com/py-libhdate/py-libhdate) 1.2.1, the same library Home Assistant's Jewish Calendar uses. Candle lighting and havdalah still use ShabBOT's own sunset and the settings below, so they match the rest of the integration.
+
+**Hebrew date.** The state is an English transliteration such as `9 Cheshvan 5787`. The Hebrew (for example `ט' מרחשוון ה' תשפ"ז`) is an attribute. The Hebrew day begins at shkia: before sunset the date is the civil day's, and at sunset it moves ahead. Attributes `civil_english` / `civil_hebrew` always keep the civil day, and `halachic_english` / `halachic_hebrew` follow shkia. hdate's "Marcheshvan" is shown as Cheshvan.
+
+**Zmanim** for the civil date (they do not jump at shkia, so havdalah is still there after sunset):
+
+| Name | How it is calculated |
+|---|---|
+| Alot HaShachar (עלות השחר) | 16.1° below the horizon |
+| Misheyakir (משיכיר) | 11° below the horizon |
+| Netz (הנץ החמה) | sunrise |
+| Sof zman Shema, MGA and GRA | 3 seasonal hours from alot (MGA) or from sunrise (GRA) |
+| Sof zman tefilla, MGA and GRA | 4 seasonal hours, the same two opinions |
+| Chatzot (חצות) | midpoint of sunrise and sunset |
+| Mincha gedola / ketana (מנחה גדולה / קטנה) | 6.5 and 9.5 seasonal hours after sunrise |
+| Plag haMincha (פלג המנחה) | 1.25 seasonal hours before sunset |
+| Shkia (שקיעה) | sunset |
+| Tzeit (צאת הכוכבים) | 8.5° below the horizon |
+| Candle lighting (הדלקת נרות) | the candle-lighting offset before ShabBOT's sunset, on an evening candles are lit, including early Shabbat. Empty otherwise |
+| Havdalah (הבדלה) | when melacha actually becomes permitted that night. Shabbat uses the Shabbat havdalah setting (60 minutes after shkia in this house, or a sun angle). A Yom Tov that is not Shabbat uses the Yom Tov end setting (42 minutes by default). Empty on an ordinary day, and empty on a night that is still inside a multi-day Yom Tov |
+
+**Parasha.** The weekly reading for the Shabbat of the Hebrew day in effect, in English and Hebrew. The Israel checkbox chooses the Israel or Chutz La'aretz list, including the weeks they differ (in 5787, from Shavuot II through Chukat-Balak). On a Shabbat that has a holiday reading instead, the state is that reading (Chol HaMoed Pesach, Shavuot II, Shmini Atzeret, …). After Shabbat's shkia the sensor moves to next week's parasha.
+
+**Israel checkbox.** This is the same box as always (one-day Yom Tov, and now the Torah reading too). When you first add ShabBOT it starts checked if Home Assistant's country is IL or the map pin is inside Israel (a box from Eilat to Metula, the coast through the Golan), and unchecked otherwise. After setup, the box is the setting: check it for Israel, uncheck it for Chutz La'aretz, even if that disagrees with the map. It does not keep following the map on its own.
+
+**Daf Yomi** is the Bavli daf for that Hebrew day: masechet and daf, in English (`Bechoros 32`) and Hebrew.
+
+`shabbot.get_day_info` returns the same facts as JSON, plus `summary`, a short sentence for a speaker. Leave `date` empty for right now. Pass a civil `date` (`2026-10-20`) for that day's daytime, with no shkia rollover.
+
 ## Entities & actions
 
 | Entity | |
@@ -119,10 +150,27 @@ Z-Wave note: Zooz switches send scene events only when *scene control* is enable
 | `calendar.shabbot_shabbat_yom_tov`, `calendar.shabbot_routines` | also visible in HA's Calendar |
 | `sensor.shabbot_next_candle_lighting`, `sensor.shabbot_next_havdalah` | timestamps |
 | `sensor.shabbot_active_overrides` | count, with details in attributes |
+| `sensor.shabbot_hebrew_date` | `9 Cheshvan 5787`, with Hebrew and the civil/halachic pair in attributes |
+| `sensor.shabbot_parasha` | this Shabbat's reading (parasha, or the holiday reading) |
+| `sensor.shabbot_daf_yomi` | `Bechoros 32`, with masechet, daf, and Hebrew |
+| `sensor.shabbot_zmanim` | the next zman still ahead; every time is an attribute |
+| `sensor.shabbot_alot_hashachar`, `sensor.shabbot_misheyakir`, `sensor.shabbot_netz`, `sensor.shabbot_sof_zman_shema_mga`, `sensor.shabbot_sof_zman_shema_gra`, `sensor.shabbot_sof_zman_tefilla_mga`, `sensor.shabbot_sof_zman_tefilla_gra`, `sensor.shabbot_chatzot`, `sensor.shabbot_mincha_gedola`, `sensor.shabbot_mincha_ketana`, `sensor.shabbot_plag_hamincha`, `sensor.shabbot_shkia`, `sensor.shabbot_tzeit` | today's time for that zman |
 | `select.shabbot_mode` | Normal / your modes (selecting one starts it today, open-ended) |
 | `switch.shabbot_device_protection`, `switch.shabbot_dry_run` | |
 
-Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_routine`, `shabbot.skip_slot`, `shabbot.reconcile`, `shabbot.announce`.
+Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_routine`, `shabbot.skip_slot`, `shabbot.reconcile`, `shabbot.announce`, `shabbot.get_day_info`.
+
+`get_day_info` takes an optional `date` and returns:
+
+| Field | |
+|---|---|
+| `hebrew_date`, `civil_hebrew_date`, `halachic_hebrew_date` | `english`, `hebrew`, `day`, `month`, `month_hebrew`, `year` |
+| `parasha` | `english`, `hebrew`, `kind` (`parasha` or `holiday`), `shabbat`, plus the holiday name when there is one |
+| `daf_yomi` | `english`, `hebrew`, `masechet`, `masechet_hebrew`, `daf` |
+| `zmanim` | ISO timestamps for each zman; `candle_lighting` and `havdalah` are null when they don't apply. `havdalah_kind` is `shabbat` or `yom_tov` |
+| `summary` | one spoken sentence: Hebrew date, parasha, Daf Yomi, and the next key times (sunrise, sof zman Shema, candle lighting, shkia, havdalah) |
+| `israel` | whether the Israel checkbox is on |
+| `rollover` | `shkia` for "right now", `daytime` when a date was passed |
 
 ## Moving over from SmartThings / Lutron / Node-RED
 

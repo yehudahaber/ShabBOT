@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
@@ -82,3 +82,16 @@ def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "announce", announce, vol.Schema({
         vol.Optional("message"): cv.string,
     }))
+
+    async def get_day_info(call: ServiceCall) -> ServiceResponse:
+        try:
+            info = _mgr(hass).day_info(call.data.get("date"))
+        except (TypeError, ValueError) as err:
+            raise ServiceValidationError(str(err)) from err
+        return info.as_dict()
+
+    hass.services.async_register(
+        DOMAIN, "get_day_info", get_day_info,
+        vol.Schema({vol.Optional("date"): cv.date}),
+        supports_response=SupportsResponse.ONLY,
+    )

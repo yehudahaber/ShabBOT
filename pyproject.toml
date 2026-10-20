@@ -8,6 +8,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "pytest-homeassistant-custom-component==0.13.367",
+    "hdate[astral]==1.2.1",
     "pyluach==2.3.0",
     "home-assistant-frontend==20260826.7",
 ]

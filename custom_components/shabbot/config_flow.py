@@ -10,6 +10,7 @@ from homeassistant.helpers import selector
 import voluptuous as vol
 
 from .const import DEFAULT_SETTINGS, DOMAIN, NAME
+from .core.dayinfo import location_is_israel
 
 MINHAG_KEYS = (
     "candle_lighting_min", "havdalah_mode", "havdalah_degrees", "havdalah_minutes",
@@ -53,7 +54,11 @@ class ShabbotConfigFlow(ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
         if user_input is not None:
             return self.async_create_entry(title=NAME, data=_clean(user_input))
-        defaults = {**DEFAULT_SETTINGS, "israel": self.hass.config.country == "IL"}
+        # The checkbox starts from Home Assistant's location. Saving the form stores
+        # that choice, and the Settings page can change it later. The stored box is
+        # what the parasha and Yom Tov schedule use.
+        defaults = {**DEFAULT_SETTINGS, "israel": location_is_israel(
+            self.hass.config.latitude, self.hass.config.longitude, self.hass.config.country)}
         if defaults["israel"]:
             defaults["candle_lighting_min"] = 40 if "jerusalem" in (self.hass.config.location_name or "").lower() else 20
         return self.async_show_form(

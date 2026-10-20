@@ -48,3 +48,9 @@ announce:
       selector:
         text:
           multiline: true
+get_day_info:
+  fields:
+    date:
+      example: "2026-10-20"
+      selector:
+        date:
