@@ -576,7 +576,11 @@ async def test_announce_style_repeat_cue_and_single_run(
         hass: HomeAssistant, manager: ShabbotManager, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cue, then the line N times; a mark already playing is not started again."""
+    import io
+    import wave
+
     from custom_components.shabbot.voice import announcer as announcer_module
+    from custom_components.shabbot.voice.prerender import ClipLibrary, media_directory
 
     sleeps: list[float] = []
 
@@ -626,3 +630,81 @@ async def test_announce_style_repeat_cue_and_single_run(
     manager.settings.update({"announce_repeat": "once", "announce_cue": False})
     await manager.announcer.async_speak_test("shkia")
     assert len(played) == 1
+
+
+async def test_announce_unmutes_even_without_volume_and_sonos_restore_keeps_mute(
+        hass: HomeAssistant, manager: ShabbotManager, freezer: FrozenDateTimeFactory,
+) -> None:
+    """A muted speaker must still speak. Sonos restore, not a second mute call, puts mute back."""
+    import io
+    import wave
+
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.shabbot.voice.prerender import ClipLibrary, media_directory
+
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "media_player", "sonos", "kitchen-sonos", suggested_object_id="kitchen",
+    )
+    hass.states.async_set(
+        "media_player.kitchen", "idle", {"volume_level": 0.2, "is_volume_muted": True},
+    )
+    calls: list[tuple[str, str, dict]] = []
+
+    async def _record(call) -> None:
+        calls.append((call.domain, call.service, dict(call.data)))
+
+    for domain, service in (
+        ("sonos", "snapshot"),
+        ("sonos", "restore"),
+        ("media_player", "volume_set"),
+        ("media_player", "volume_mute"),
+        ("media_player", "play_media"),
+    ):
+        hass.services.async_register(domain, service, _record)
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000)
+    ClipLibrary(media_directory(hass)).store("tts.piper", "", "", "shkee-ah", buffer.getvalue())
+
+    manager.settings.update({
+        "voice_enabled": True,
+        "announce_enabled": True,
+        "announce_players": ["media_player.kitchen"],
+        "announce_tts_entity": "tts.piper",
+        "announce_volume": None,
+        "announce_repeat": "once",
+        "announce_cue": False,
+        "dry_run": False,
+    })
+    await manager.announcer.async_speak_test("shkia")
+    await hass.async_block_till_done()
+    assert ("media_player", "volume_set") not in [(d, s) for d, s, _ in calls]
+    mute = [data for domain, service, data in calls if domain == "media_player" and service == "volume_mute"]
+    assert mute == [{"entity_id": ["media_player.kitchen"], "is_volume_muted": False}]
+    prepare = [(domain, service) for domain, service, _ in calls]
+    assert prepare.index(("sonos", "snapshot")) < prepare.index(("media_player", "volume_mute"))
+    assert prepare.index(("media_player", "volume_mute")) < prepare.index(("media_player", "play_media"))
+
+    await _advance(hass, freezer, timedelta(seconds=4))
+    assert [service for _domain, service, _data in calls].count("volume_mute") == 1
+    assert ("sonos", "restore") in [(domain, service) for domain, service, _data in calls]
+    restore = next(data for domain, service, data in calls if domain == "sonos" and service == "restore")
+    assert restore["entity_id"] == ["media_player.kitchen"]
+    assert "is_volume_muted" not in restore
+
+    calls.clear()
+    manager.settings["announce_volume"] = 40
+    await manager.announcer.async_speak_test("shkia")
+    await hass.async_block_till_done()
+    ordered = [(domain, service, data) for domain, service, data in calls]
+    assert ("media_player", "volume_set", {"entity_id": ["media_player.kitchen"], "volume_level": 0.4}) in ordered
+    assert ("media_player", "volume_mute", {"entity_id": ["media_player.kitchen"], "is_volume_muted": False}) in ordered
+    services = [(domain, service) for domain, service, _data in ordered]
+    assert services.index(("media_player", "volume_set")) < services.index(("media_player", "volume_mute"))
+    assert services.index(("media_player", "volume_mute")) < services.index(("media_player", "play_media"))

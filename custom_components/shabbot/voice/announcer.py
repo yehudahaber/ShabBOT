@@ -10,7 +10,9 @@ An optional soft cue plays first, then the line is spoken once or twice (the
 a mark that is already playing is not started again, and runs never overlap.
 
 Sonos players are snapshotted before speech and restored afterwards, so a
-previous queue and volume come back. Other players only have their volume put
+previous queue, volume, and mute come back. Mute is cleared on the announce
+players before speech, including when no announcement volume is set, because
+mute is independent of volume_level. Other players only have their volume put
 back, and only when an announcement volume is set — there is no standard
 snapshot service for them.
 """
@@ -488,7 +490,24 @@ class Announcer:
                 )
             except Exception as err:
                 _LOGGER.warning("Could not set announcement volume: %s", err)
+        # Sonos mute is not volume_level. Snapshot already saved it; restore puts
+        # it back. Speech still has to be audible when volume is unset.
+        await self._unmute(players)
         return holds
+
+    async def _unmute(self, players: list[str]) -> None:
+        """Clear mute on the announce players. No-op when the service is missing."""
+        hass = self._m.hass
+        if not players or not hass.services.has_service("media_player", "volume_mute"):
+            return
+        try:
+            await hass.services.async_call(
+                "media_player", "volume_mute",
+                {"entity_id": players, "is_volume_muted": False},
+                blocking=True,
+            )
+        except Exception as err:
+            _LOGGER.warning("Could not unmute announcement players: %s", err)
 
     def _schedule_restore(self, holds: list[_Hold], delay: float) -> None:
         if not any(hold.sonos or hold.previous_volume is not None for hold in holds):
