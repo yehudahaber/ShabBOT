@@ -115,6 +115,10 @@ export interface Settings {
   announce_lead_seconds: number;
   announce_player_leads: Record<string, number>;
   announce_volume: number | null;
+  announce_repeat: "once" | "twice";
+  announce_cue: boolean;
+  announce_gap_ms: number;
+  announce_cue_media_id: string;
   announce_candle_marks: number[];
   announce_shkia_marks: number[];
   announce_yt_marks: number[];

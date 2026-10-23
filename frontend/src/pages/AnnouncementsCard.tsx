@@ -184,6 +184,30 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
 
       <VolumeField value={draft.announce_volume} onChange={(v) => set("announce_volume", v)} />
 
+      <div className="sb-grid-2">
+        <Field label="Repeat" hint="Total plays of each sentence, with a short gap between them. The final warning starts early enough to finish on its mark.">
+          <select className="sb-input" value={draft.announce_repeat ?? "once"}
+            onChange={(e) => set("announce_repeat", e.target.value === "twice" ? "twice" : "once")}>
+            <option value="once">Repeat once</option>
+            <option value="twice">Repeat twice</option>
+          </select>
+        </Field>
+        <Field label="Gap (ms)" hint="Silence between the cue and the sentence, and between repeats.">
+          <input className="sb-input" type="number" min={0} max={5000} step={50} value={draft.announce_gap_ms ?? 400}
+            onChange={(e) => set("announce_gap_ms", clampInt(e.target.value, 0, 5000))} />
+        </Field>
+      </div>
+      <Check checked={draft.announce_cue ?? false} onChange={(v) => set("announce_cue", v)}>
+        Soft cue beep before each announcement
+      </Check>
+      {draft.announce_cue && (
+        <Field label="Custom cue (optional)" hint="A media-source or URL id to play instead of the bundled soft tone.">
+          <input className="sb-input" value={draft.announce_cue_media_id ?? ""} spellCheck={false}
+            placeholder="media-source://media_source/local/…"
+            onChange={(e) => set("announce_cue_media_id", e.target.value)} />
+        </Field>
+      )}
+
       <p className="sb-hint">
         Each announcement is a switch, the minute marks, and the wording. Placeholders: {"{minutes}"}, {"{time}"}, {"{about}"}, {"{parasha}"}, {"{hebrew_date}"}, {"{daf}"}, {"{zman_name}"}. Leave the wording blank to skip that sentence.
       </p>

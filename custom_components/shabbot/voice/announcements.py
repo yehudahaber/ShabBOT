@@ -130,6 +130,10 @@ ANNOUNCE_DEFAULTS: dict[str, Any] = {
     "announce_lead_seconds": 0,
     "announce_player_leads": {},
     "announce_volume": None,
+    "announce_repeat": "once",
+    "announce_cue": False,
+    "announce_gap_ms": 400,
+    "announce_cue_media_id": "",
     "announce_candle_marks": list(DEFAULT_CANDLE_MARKS),
     "announce_shkia_marks": list(DEFAULT_SHKIA_MARKS),
     "announce_yt_marks": list(DEFAULT_YT_MARKS),
@@ -226,6 +230,49 @@ def coerce_volume(value: Any) -> int | None:
     return number
 
 
+REPEAT_PLAYS: dict[str, int] = {"once": 1, "twice": 2}
+DEFAULT_GAP_MS = 400
+MAX_GAP_MS = 5000
+# Length assumed for a user-supplied cue, whose duration is not read.
+CUSTOM_CUE_SECONDS = 1.0
+
+
+def coerce_repeat(value: Any) -> str:
+    text = str(value or "once").strip().lower()
+    if text not in REPEAT_PLAYS:
+        raise ValueError("Repeat must be once or twice")
+    return text
+
+
+def coerce_gap_ms(value: Any) -> int:
+    number = _whole(DEFAULT_GAP_MS if value in (None, "") else value, "Gap")
+    if not 0 <= number <= MAX_GAP_MS:
+        raise ValueError(f"Gap must be between 0 and {MAX_GAP_MS} ms")
+    return number
+
+
+def _gap_or_default(value: Any) -> int:
+    try:
+        return coerce_gap_ms(value)
+    except ValueError:
+        return DEFAULT_GAP_MS
+
+
+def playback_seconds(
+    clip_seconds: float, *, repeat: int, cue_seconds: float | None, gap_ms: int,
+) -> float:
+    """Total time from the first sound to the end of the last play.
+
+    A cue (when ``cue_seconds`` is set) and every spoken play are separated by one gap.
+    """
+    gap = gap_ms / 1000
+    plays = max(1, repeat)
+    total = clip_seconds * plays + gap * (plays - 1)
+    if cue_seconds is not None:
+        total += cue_seconds + gap
+    return total
+
+
 def coerce_players(value: Any) -> tuple[str, ...]:
     if value in (None, "", []):
         return ()
@@ -310,6 +357,10 @@ class AnnounceOptions:
     lead_seconds: int
     player_leads: dict[str, int]
     volume: int | None
+    repeat: int
+    cue: bool
+    gap_ms: int
+    cue_media_id: str
     candle_marks: tuple[int, ...]
     shkia_marks: tuple[int, ...]
     yt_marks: tuple[int, ...]
@@ -361,6 +412,10 @@ def options_from_settings(settings: dict[str, Any] | None) -> AnnounceOptions:
             pronunciations = dict(DEFAULT_PRONUNCIATIONS)
     return AnnounceOptions(
         enabled=bool(s.get("announce_enabled")),
+        repeat=REPEAT_PLAYS.get(str(s.get("announce_repeat") or "once").lower(), 1),
+        cue=s.get("announce_cue") is True,
+        gap_ms=_gap_or_default(s.get("announce_gap_ms")),
+        cue_media_id=str(s.get("announce_cue_media_id") or "").strip(),
         players=players,
         tts_entity=str(s.get("announce_tts_entity") or "").strip(),
         voice=str(s.get("announce_voice") or "").strip(),

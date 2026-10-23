@@ -456,3 +456,23 @@ def test_settings_schema_accepts_group_toggles_and_sorts_marks() -> None:
     assert out["announce_yt_marks"] == [60, 5]
     with pytest.raises(vol.Invalid):
         SETTINGS_SCHEMA({"announce_groups": {"nope": True}})
+
+
+def test_playback_span_counts_cue_gaps_and_repeats() -> None:
+    span = announcements.playback_seconds
+    assert span(3.0, repeat=1, cue_seconds=None, gap_ms=400) == 3.0
+    assert span(3.0, repeat=2, cue_seconds=None, gap_ms=400) == pytest.approx(6.4)
+    assert span(3.0, repeat=2, cue_seconds=0.5, gap_ms=400) == pytest.approx(7.3)
+
+
+def test_announce_style_options_are_lenient() -> None:
+    defaults = announcements.options_from_settings({})
+    assert (defaults.repeat, defaults.cue, defaults.gap_ms) == (1, False, 400)
+    chosen = announcements.options_from_settings(
+        {"announce_repeat": "twice", "announce_cue": True, "announce_gap_ms": 300},
+    )
+    assert (chosen.repeat, chosen.cue, chosen.gap_ms) == (2, True, 300)
+    broken = announcements.options_from_settings({"announce_repeat": "thrice", "announce_gap_ms": "x"})
+    assert (broken.repeat, broken.gap_ms) == (1, 400)
+    with pytest.raises(ValueError):
+        announcements.coerce_repeat("three")

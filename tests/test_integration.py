@@ -570,3 +570,59 @@ async def test_prerender_file_io_stays_off_the_event_loop(
         if "Detected blocking call" in record.getMessage() and str(media) in record.getMessage()
     ]
     assert blocking == []
+
+
+async def test_announce_style_repeat_cue_and_single_run(
+        hass: HomeAssistant, manager: ShabbotManager, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cue, then the line N times; a mark already playing is not started again."""
+    from custom_components.shabbot.voice import announcer as announcer_module
+
+    sleeps: list[float] = []
+
+    async def _no_wait(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(announcer_module.asyncio, "sleep", _no_wait)
+    played: list[dict] = []
+
+    async def _play(call) -> None:
+        played.append(dict(call.data))
+
+    hass.services.async_register("media_player", "play_media", _play)
+    manager.settings.update({
+        "voice_enabled": True,
+        "announce_enabled": True,
+        "announce_players": ["media_player.kitchen"],
+        "announce_tts_entity": "tts.piper",
+        "announce_repeat": "twice",
+        "announce_cue": True,
+        "announce_gap_ms": 500,
+        "dry_run": False,
+    })
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000)
+    ClipLibrary(media_directory(hass)).store("tts.piper", "", "", "shkee-ah", buffer.getvalue())
+
+    await manager.announcer.async_speak_test("shkia")
+    ids = [item["media_content_id"] for item in played]
+    assert len(ids) == 3
+    assert ids[0].endswith("/soft_cue.wav")
+    assert ids[1] == ids[2] and not ids[1].endswith("/soft_cue.wav")
+    assert (media_directory(hass) / "soft_cue.wav").is_file()
+    assert sleeps == [0.5 + 0.5, 1.0 + 0.5]
+
+    # Same key while a run is in flight: ignored, never a third play.
+    manager.announcer._active.add(("test",))
+    played.clear()
+    await manager.announcer.async_speak_test("shkia")
+    assert not played
+
+    manager.announcer._active.clear()
+    manager.settings.update({"announce_repeat": "once", "announce_cue": False})
+    await manager.announcer.async_speak_test("shkia")
+    assert len(played) == 1
