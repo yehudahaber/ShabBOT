@@ -3,9 +3,9 @@
 import pytest
 import voluptuous as vol
 
-from custom_components.shabbot.core.announcements import DEFAULT_TEMPLATES, options_from_settings
 from custom_components.shabbot.core.jcal import _ISRAEL_NAMES, _YOM_TOV
-from custom_components.shabbot.core.pronounce import DEFAULT_PRONUNCIATIONS, apply_pronunciation, coerce_pronunciations
+from custom_components.shabbot.voice.announcements import DEFAULT_TEMPLATES, options_from_settings
+from custom_components.shabbot.voice.pronounce import DEFAULT_PRONUNCIATIONS, apply_pronunciation, coerce_pronunciations
 from custom_components.shabbot.websocket import SETTINGS_SCHEMA
 
 
@@ -49,12 +49,12 @@ def test_longer_phrase_wins_over_the_words_inside_it() -> None:
 
 
 def test_defaults_cover_template_words_and_every_holiday_name() -> None:
-    sentence = DEFAULT_TEMPLATES["motzei"].format(minutes=42, unit="minutes")
-    spoken = _say(sentence)
+    spoken = _say(DEFAULT_TEMPLATES["motzei"].format(occasion="Shabbat", about="about an hour"))
     assert "shkee-ah" in spoken
-    assert "moo-tahr" in spoken
+    assert "hahv-dah-lah" in spoken
+    assert "moht-zay shah-baht" in spoken
     assert "meh-lah-khah" in spoken
-    assert "It's now 42 minutes" in spoken
+    assert "muttar" not in spoken
 
     names = {holiday.name for holiday in _YOM_TOV.values()}
     names |= {holiday.name for holiday in _ISRAEL_NAMES.values()}
@@ -63,10 +63,16 @@ def test_defaults_cover_template_words_and_every_holiday_name() -> None:
         assert _say(name) != name, name
 
 
-def test_user_map_replaces_defaults_instead_of_merging() -> None:
+def test_saved_rows_are_stored_alone_and_overlay_the_builtin_lexicon() -> None:
+    """The settings field stays the rows the user edited. Speech still keeps every other built-in word."""
+    from custom_components.shabbot.voice.lexicon import speak
+
     options = options_from_settings({"announce_pronunciations": {"Shkia": "SHEE-kee-ah"}})
     assert options.pronunciations == {"shkia": "SHEE-kee-ah"}
     assert apply_pronunciation("shkia and melacha", options.pronunciations) == "SHEE-kee-ah and melacha"
+    assert speak("shkia and melacha", {"announce_pronunciations": {"Shkia": "SHEE-kee-ah"}}) == (
+        "SHEE-kee-ah and meh-lah-khah"
+    )
 
     missing = options_from_settings({})
     assert missing.pronunciations["shkia"] == "shkee-ah"

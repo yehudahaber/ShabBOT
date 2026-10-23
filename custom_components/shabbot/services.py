@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
 from .const import DOMAIN
 from .manager import ShabbotManager
+from .voice.briefing import async_daily_briefing
+from .voice.lexicon import async_spoken
 
 
 def _mgr(hass: HomeAssistant) -> ShabbotManager:
@@ -82,3 +84,34 @@ def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "announce", announce, vol.Schema({
         vol.Optional("message"): cv.string,
     }))
+
+    async def get_day_info(call: ServiceCall) -> ServiceResponse:
+        try:
+            info = _mgr(hass).day_info(call.data.get("date"))
+        except (TypeError, ValueError) as err:
+            raise ServiceValidationError(str(err)) from err
+        payload = info.as_dict()
+        text = payload["summary"]
+        payload["text"] = text
+        payload["spoken"] = await async_spoken(hass, text, _mgr(hass).settings)
+        return payload
+
+    hass.services.async_register(
+        DOMAIN, "get_day_info", get_day_info,
+        vol.Schema({vol.Optional("date"): cv.date}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def get_daily_briefing(call: ServiceCall) -> ServiceResponse:
+        try:
+            return await async_daily_briefing(_mgr(hass).hass, _mgr(hass), call.data.get("date"))
+        except ServiceValidationError:
+            raise
+        except (TypeError, ValueError) as err:
+            raise ServiceValidationError(str(err)) from err
+
+    hass.services.async_register(
+        DOMAIN, "get_daily_briefing", get_daily_briefing,
+        vol.Schema({vol.Optional("date"): cv.date}),
+        supports_response=SupportsResponse.ONLY,
+    )

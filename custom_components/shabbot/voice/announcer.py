@@ -5,14 +5,21 @@ that file, so the speakers are not waiting on TTS at the mark. A missing file
 falls back to live ``tts.speak``. The final stop-melacha warning is scheduled
 from the known clip length so the sentence ends on its mark.
 
+An optional soft cue plays first, then the line is spoken once or twice (the
+``announce_repeat`` setting) with a short gap between plays. One run per mark:
+a mark that is already playing is not started again, and runs never overlap.
+
 Sonos players are snapshotted before speech and restored afterwards, so a
-previous queue and volume come back. Other players only have their volume put
+previous queue, volume, and mute come back. Mute is cleared on the announce
+players before speech, including when no announcement volume is set, because
+mute is independent of volume_level. Other players only have their volume put
 back, and only when an announcement volume is set — there is no standard
 snapshot service for them.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from functools import partial
 import logging
@@ -24,13 +31,25 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.util import dt as dt_util
 
-from .const import PLAN_HORIZON_DAYS
-from .core import announcements, jcal
-from .core.pronounce import apply_pronunciation
-from .prerender import Clip, ClipLibrary, media_directory, synthesize, tts_ready
+from ..const import PLAN_HORIZON_DAYS
+from ..core import jcal
+from . import announcements
+from .gate import voice_module_enabled
+from .lexicon import effective_lexicon, load_lexicon_file
+from .prerender import (
+    BUNDLED_CUE_SECONDS,
+    MEDIA_SOURCE_PREFIX,
+    Clip,
+    ClipLibrary,
+    install_cue,
+    media_directory,
+    synthesize,
+    tts_ready,
+)
+from .pronounce import apply_pronunciation
 
 if TYPE_CHECKING:
-    from .manager import ShabbotManager
+    from ..manager import ShabbotManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,6 +81,12 @@ class Announcer:
         self._generation = 0
         self._clips: dict[str, Clip] = {}
         self._clip_signature: tuple[str, str, str] | None = None
+        self._lexicon_path = ""
+        self._lexicon_file: dict[str, str] = {}
+        self._cue: tuple[str, float | None] | None = None
+        self._active: set[tuple] = set()
+        self._play_lock = asyncio.Lock()
+        self._tasks: set[asyncio.Task] = set()
 
     def reschedule(self) -> None:
         """Rebuild timers from the current settings and calendar. Safe to call often."""
@@ -70,6 +95,8 @@ class Announcer:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        if not voice_module_enabled(self._m.settings):
+            return
         options = announcements.options_from_settings(self._m.settings)
         if not options.enabled:
             return
@@ -90,7 +117,9 @@ class Announcer:
             self._m.location,
             self._m.minhag,
         )
-        events = announcements.plan_announcements(blocks, self._m.minhag, options)
+        events = announcements.plan_announcements(
+            blocks, self._m.minhag, options, location=self._m.location,
+        )
         calls = announcements.schedule_announcements(
             events,
             players=options.players,
@@ -113,6 +142,10 @@ class Announcer:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        for task in list(self._tasks):
+            task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         pending = self._holds
         self._holds = []
         for unsub, holds in pending:
@@ -121,15 +154,26 @@ class Announcer:
 
     @callback
     def _on_due(self, call: announcements.ScheduledCall, _now: Any) -> None:
-        self._m.hass.async_create_task(self._speak(
-            call.announcement.message, list(call.players),
+        key = ("mark", call.announcement.id, call.players)
+        if key in self._active:
+            _LOGGER.debug("Announcement %s is already playing, not starting it again", call.announcement.id)
+            return
+        self._active.add(key)
+        task = self._m.hass.async_create_task(self._speak(
+            call.announcement.message, list(call.players), key=key, claimed=True,
         ))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def async_speak_test(self, message: str | None = None) -> str:
         """Speak (or, in dry run, log) one sentence now. Does not require the schedule to be enabled.
 
         Returns the text actually sent to TTS, after the pronunciation map.
         """
+        if not voice_module_enabled(self._m.settings):
+            raise ServiceValidationError(
+                "The voice module is turned off. Turn it on in ShabBOT settings to speak.",
+            )
         options = announcements.options_from_settings(self._m.settings)
         if not options.players:
             raise ServiceValidationError("Choose at least one media player")
@@ -140,19 +184,47 @@ class Announcer:
             raise ServiceValidationError("That line is too long")
         return await self._speak(text, list(options.players), render_first=True)
 
-    async def _speak(self, message: str, players: list[str], *, render_first: bool = False) -> str:
+    async def _speak(
+        self, message: str, players: list[str], *,
+        render_first: bool = False, key: tuple = ("test",), claimed: bool = False,
+    ) -> str:
+        """One announcement run. A run for the same key, or any run in flight, is never doubled up."""
+        if not claimed:
+            if key in self._active:
+                _LOGGER.debug("Announcement already playing, ignoring a second start")
+                return apply_pronunciation(message, self._speech_map())
+            self._active.add(key)
+        try:
+            async with self._play_lock:
+                return await self._run(message, players, render_first=render_first)
+        finally:
+            self._active.discard(key)
+
+    async def _run(self, message: str, players: list[str], *, render_first: bool) -> str:
         options = announcements.options_from_settings(self._m.settings)
-        spoken = apply_pronunciation(message, options.pronunciations)
+        await self._refresh_lexicon_file()
+        spoken = apply_pronunciation(message, self._speech_map())
         if not players:
             return spoken
         if self._m.settings.get("dry_run"):
             self._m.log("announce", f"Dry run: {message}", players[0] if len(players) == 1 else None, players=players)
             return spoken
-        hass = self._m.hass
         if not options.tts_entity:
             self._m.log("error", f"Announcement not spoken (choose a TTS engine): {message}")
             return spoken
         holds = await self._prepare(players, options.volume)
+        try:
+            return await self._play(message, spoken, players, options, holds, render_first=render_first)
+        except asyncio.CancelledError:
+            await self._restore(holds)
+            raise
+
+    async def _play(
+        self, message: str, spoken: str, players: list[str], options: announcements.AnnounceOptions,
+        holds: list[_Hold], *, render_first: bool,
+    ) -> str:
+        hass = self._m.hass
+        gap = options.gap_ms / 1000
         if spoken not in self._clips and options.tts_entity:
             cached = await self._load_index(options)
             found = cached.get(spoken)
@@ -161,10 +233,16 @@ class Announcer:
         if render_first and spoken not in self._clips:
             await self._render_one(options, spoken)
         clip = self._clips.get(spoken)
+        await self._play_cue(players, options)
         if clip is not None:
-            if await self._file_exists(clip.filename) and await self._play_clip(players, clip):
+            seconds = clip.seconds or _speech_seconds(spoken)
+            if await self._file_exists(clip.filename) and await self._play_clip(players, clip.media_content_id):
+                for _ in range(options.repeat - 1):
+                    await asyncio.sleep(seconds + gap)
+                    if not await self._play_clip(players, clip.media_content_id):
+                        break
                 self._m.log("announce", message, players[0] if len(players) == 1 else None, players=players)
-                self._schedule_restore(holds, (clip.seconds or _speech_seconds(spoken)) + 1.5)
+                self._schedule_restore(holds, seconds + 1.5)
                 return spoken
             _LOGGER.info("Pre-rendered announcement missing or unplayable, using live TTS")
         if not hass.services.has_service("tts", "speak"):
@@ -181,9 +259,12 @@ class Announcer:
         if options.voice:
             data["options"] = {"voice": options.voice}
         try:
-            await hass.services.async_call(
-                "tts", "speak", data, target={"entity_id": options.tts_entity}, blocking=True,
-            )
+            for index in range(options.repeat):
+                if index:
+                    await asyncio.sleep(_speech_seconds(spoken) + gap)
+                await hass.services.async_call(
+                    "tts", "speak", data, target={"entity_id": options.tts_entity}, blocking=True,
+                )
         except Exception as err:
             self._m.log("error", f"Announcement failed: {err}")
             _LOGGER.warning("Announcement failed: %s", err)
@@ -193,7 +274,26 @@ class Announcer:
         self._schedule_restore(holds, _speech_seconds(spoken))
         return spoken
 
-    async def _play_clip(self, players: list[str], clip: Clip) -> bool:
+    async def _resolve_cue(self, options: announcements.AnnounceOptions) -> tuple[str, float | None] | None:
+        """(media id, seconds) of the soft cue: the configured override, else the packaged WAV."""
+        if options.cue_media_id:
+            return options.cue_media_id, announcements.CUSTOM_CUE_SECONDS
+        if self._cue is None:
+            clip = await self._m.hass.async_add_executor_job(install_cue, media_directory(self._m.hass))
+            if clip is None:
+                return None
+            self._cue = (f"{MEDIA_SOURCE_PREFIX}/{clip.filename}", clip.seconds or BUNDLED_CUE_SECONDS)
+        return self._cue
+
+    async def _play_cue(self, players: list[str], options: announcements.AnnounceOptions) -> None:
+        if not options.cue:
+            return
+        cue = await self._resolve_cue(options)
+        if cue is None or not await self._play_clip(players, cue[0]):
+            return
+        await asyncio.sleep((cue[1] or BUNDLED_CUE_SECONDS) + options.gap_ms / 1000)
+
+    async def _play_clip(self, players: list[str], media_content_id: str) -> bool:
         hass = self._m.hass
         if not hass.services.has_service("media_player", "play_media"):
             return False
@@ -202,7 +302,7 @@ class Announcer:
                 "media_player", "play_media",
                 {
                     "entity_id": players,
-                    "media_content_id": clip.media_content_id,
+                    "media_content_id": media_content_id,
                     "media_content_type": "music",
                     "announce": True,
                 },
@@ -219,6 +319,13 @@ class Announcer:
         """Load the index off the loop, render anything missing, and reschedule when a length is new."""
         if generation != self._generation:
             return
+        before = self._speech_map()
+        await self._refresh_lexicon_file()
+        if generation != self._generation:
+            return
+        if self._speech_map() != before:
+            self.reschedule()
+            return
         try:
             loaded = await self._load_index(options)
         except OSError as err:
@@ -233,11 +340,10 @@ class Announcer:
             return
         if not tts_ready(self._m.hass):
             return
-        texts = list(dict.fromkeys(
-            apply_pronunciation(event.message, options.pronunciations) for event in events
-        ))
+        speech = self._speech_map()
+        texts = list(dict.fromkeys(apply_pronunciation(event.message, speech) for event in events))
         end_texts = {
-            apply_pronunciation(event.message, options.pronunciations)
+            apply_pronunciation(event.message, speech)
             for event in events
             if event.kind in announcements.END_ON_TIME_KINDS
         }
@@ -291,6 +397,22 @@ class Announcer:
         self._clips[text] = clip
         return True
 
+    def _speech_map(self) -> dict[str, str]:
+        """Lexicon for a turn that is already on the event loop. Does not read the YAML file."""
+        path = str(self._m.settings.get("tts_lexicon_path") or "").strip()
+        file_map = self._lexicon_file if path and self._lexicon_path == path else {}
+        return effective_lexicon(self._m.settings, file_map=file_map, allow_read=False)
+
+    async def _refresh_lexicon_file(self) -> None:
+        """Load ``tts_lexicon_path`` off the loop. An empty path does not touch the disk."""
+        path = str(self._m.settings.get("tts_lexicon_path") or "").strip()
+        if not path:
+            self._lexicon_path = ""
+            self._lexicon_file = {}
+            return
+        self._lexicon_file = await self._m.hass.async_add_executor_job(load_lexicon_file, path)
+        self._lexicon_path = path
+
     def _library(self) -> ClipLibrary:
         return ClipLibrary(media_directory(self._m.hass))
 
@@ -301,11 +423,22 @@ class Announcer:
         for event in events:
             if event.kind not in announcements.END_ON_TIME_KINDS:
                 continue
-            spoken = apply_pronunciation(event.message, options.pronunciations)
+            spoken = apply_pronunciation(event.message, self._speech_map())
             clip = self._clips.get(spoken)
             if clip and clip.seconds:
-                lengths[event.id] = clip.seconds
+                lengths[event.id] = announcements.playback_seconds(
+                    clip.seconds,
+                    repeat=options.repeat,
+                    cue_seconds=self._cue_seconds(options),
+                    gap_ms=options.gap_ms,
+                )
         return lengths
+
+    @staticmethod
+    def _cue_seconds(options: announcements.AnnounceOptions) -> float | None:
+        if not options.cue:
+            return None
+        return announcements.CUSTOM_CUE_SECONDS if options.cue_media_id else BUNDLED_CUE_SECONDS
 
     def _schedule_prerender_refresh(
         self, events: list[announcements.Announcement], now, options: announcements.AnnounceOptions,
@@ -357,7 +490,24 @@ class Announcer:
                 )
             except Exception as err:
                 _LOGGER.warning("Could not set announcement volume: %s", err)
+        # Sonos mute is not volume_level. Snapshot already saved it; restore puts
+        # it back. Speech still has to be audible when volume is unset.
+        await self._unmute(players)
         return holds
+
+    async def _unmute(self, players: list[str]) -> None:
+        """Clear mute on the announce players. No-op when the service is missing."""
+        hass = self._m.hass
+        if not players or not hass.services.has_service("media_player", "volume_mute"):
+            return
+        try:
+            await hass.services.async_call(
+                "media_player", "volume_mute",
+                {"entity_id": players, "is_volume_muted": False},
+                blocking=True,
+            )
+        except Exception as err:
+            _LOGGER.warning("Could not unmute announcement players: %s", err)
 
     def _schedule_restore(self, holds: list[_Hold], delay: float) -> None:
         if not any(hold.sonos or hold.previous_volume is not None for hold in holds):

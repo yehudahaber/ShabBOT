@@ -3,14 +3,14 @@
     "step": {
       "user": {
         "title": "Set up ShabBOT",
-        "description": "Zmanim are calculated for Home Assistant's location ({latitude}, {longitude}, {time_zone}). ShabBOT starts in dry-run mode: it logs what it would do without touching devices until you turn dry-run off.",
+        "description": "Zmanim are calculated for Home Assistant's location ({latitude}, {longitude}, {time_zone}). The Israel box starts checked when that country is Israel or the map pin is in Israel. You can change it. ShabBOT starts in dry-run mode: it logs what it would do without touching devices until you turn dry-run off.",
         "data": {
           "candle_lighting_min": "Candle lighting (minutes before sunset)",
           "havdalah_mode": "Havdalah calculation",
           "havdalah_degrees": "Havdalah: sun degrees below horizon",
           "havdalah_minutes": "Shabbat havdalah: minutes after sunset",
           "yom_tov_end_minutes": "Yom Tov end: minutes after sunset",
-          "israel": "Israel (one-day Yom Tov)"
+          "israel": "Israel (Eretz Yisrael: one-day Yom Tov and the Israel Torah reading)"
         }
       }
     },
@@ -29,7 +29,7 @@
           "havdalah_degrees": "Havdalah: sun degrees below horizon",
           "havdalah_minutes": "Shabbat havdalah: minutes after sunset",
           "yom_tov_end_minutes": "Yom Tov end: minutes after sunset",
-          "israel": "Israel (one-day Yom Tov)"
+          "israel": "Israel (Eretz Yisrael: one-day Yom Tov and the Israel Torah reading)"
         }
       }
     }
@@ -52,7 +52,24 @@
     "sensor": {
       "next_candle_lighting": {"name": "Next candle lighting"},
       "next_havdalah": {"name": "Next havdalah"},
-      "active_overrides": {"name": "Active overrides"}
+      "active_overrides": {"name": "Active overrides"},
+      "hebrew_date": {"name": "Hebrew date"},
+      "parasha": {"name": "Parasha"},
+      "daf_yomi": {"name": "Daf Yomi"},
+      "zmanim": {"name": "Zmanim"},
+      "alot_hashachar": {"name": "Alot HaShachar"},
+      "misheyakir": {"name": "Misheyakir"},
+      "netz": {"name": "Netz"},
+      "sof_zman_shema_mga": {"name": "Sof zman Shema MGA"},
+      "sof_zman_shema_gra": {"name": "Sof zman Shema GRA"},
+      "sof_zman_tefilla_mga": {"name": "Sof zman tefilla MGA"},
+      "sof_zman_tefilla_gra": {"name": "Sof zman tefilla GRA"},
+      "chatzot": {"name": "Chatzot"},
+      "mincha_gedola": {"name": "Mincha gedola"},
+      "mincha_ketana": {"name": "Mincha ketana"},
+      "plag_hamincha": {"name": "Plag haMincha"},
+      "shkia": {"name": "Shkia"},
+      "tzeit": {"name": "Tzeit"}
     },
     "switch": {
       "protection": {"name": "Device protection"},
@@ -95,6 +112,26 @@
       "description": "Speak one sentence on the announcement players now. In dry run, it is only logged. Leave the message empty for a test sentence.",
       "fields": {
         "message": {"name": "Message", "description": "What to say. Empty uses a short test sentence."}
+      }
+    },
+    "get_day_info": {
+      "name": "Get the day's Jewish calendar",
+      "description": "Hebrew date, parasha, Daf Yomi, and zmanim as structured data, plus a short summary. text is that sentence as written. spoken is the TTS respelling. Leave the date empty for right now (the Hebrew date moves at shkia). A date uses that civil day's daytime.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "Civil date (YYYY-MM-DD). Empty means now, and the Hebrew day begins at shkia."
+        }
+      }
+    },
+    "get_daily_briefing": {
+      "name": "Kids' daily briefing",
+      "description": "One spoken script for kids: Hebrew date, parasha or holiday, Daf Yomi, shkia, candle lighting or havdalah, a countdown, the weather entity you picked, and a note from home. text is the sentence as written and spoken is the TTS respelling. With no date, the calendar wording stays the same from morning until shkia. The voice module has to be on. Nothing is read from the web.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "Civil date (YYYY-MM-DD). Empty means right now."
+        }
       }
     }
   }

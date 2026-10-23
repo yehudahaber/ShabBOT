@@ -106,6 +106,7 @@ export interface Settings {
   storm_window_min: number;
   notify_service: string;
   notify_overrides: boolean;
+  voice_enabled: boolean;
   announce_enabled: boolean;
   announce_players: string[];
   announce_tts_entity: string;
@@ -114,6 +115,10 @@ export interface Settings {
   announce_lead_seconds: number;
   announce_player_leads: Record<string, number>;
   announce_volume: number | null;
+  announce_repeat: "once" | "twice";
+  announce_cue: boolean;
+  announce_gap_ms: number;
+  announce_cue_media_id: string;
   announce_candle_marks: number[];
   announce_shkia_marks: number[];
   announce_yt_marks: number[];
@@ -121,6 +126,11 @@ export interface Settings {
   announce_groups: AnnounceGroups;
   announce_templates: AnnounceTemplates;
   announce_pronunciations: Record<string, string>;
+  briefing_template: string;
+  briefing_weather_entity: string;
+  briefing_notes_entity: string;
+  briefing_notes_until: string;
+  tts_lexicon_path: string;
 }
 
 export interface AnnounceGroups {

@@ -24,6 +24,9 @@ from homeassistant.core import HomeAssistant
 _LOGGER = logging.getLogger(__name__)
 
 INDEX_NAME = "index.json"
+CUE_NAME = "soft_cue.wav"
+BUNDLED_CUE_SECONDS = 0.5
+BUNDLED_CUE = Path(__file__).parent / "assets" / CUE_NAME
 MEDIA_SOURCE_PREFIX = "media-source://media_source/local/shabbot"
 
 # MPEG-1 / MPEG-2 Layer III bitrates, index 0 and 15 unused.
@@ -57,6 +60,23 @@ def media_directory(hass: HomeAssistant) -> Path:
     dirs = getattr(hass.config, "media_dirs", None) or {}
     base = dirs.get("local") or hass.config.path("media")
     return Path(base) / "shabbot"
+
+
+def install_cue(directory: Path) -> Clip | None:
+    """Copy the packaged soft cue into the media folder so players can fetch it.
+
+    Blocking file I/O: run on the executor. Returns None if the copy fails.
+    """
+    try:
+        data = BUNDLED_CUE.read_bytes()
+        target = directory / CUE_NAME
+        if not target.is_file() or target.stat().st_size != len(data):
+            directory.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+    except OSError as err:
+        _LOGGER.warning("Could not install the bundled announcement cue: %s", err)
+        return None
+    return Clip(text="", filename=CUE_NAME, seconds=audio_seconds(data, "wav"))
 
 
 def sniff_extension(data: bytes) -> str:
@@ -226,7 +246,7 @@ class ClipLibrary:
         payload = self._read_index()
         if payload.get("signature") != _signature(engine, voice, language):
             return
-        keep = {INDEX_NAME}
+        keep = {INDEX_NAME, CUE_NAME}
         for row in (payload.get("clips") or {}).values():
             if isinstance(row, dict) and row.get("file"):
                 keep.add(str(row["file"]))

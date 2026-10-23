@@ -106,9 +106,16 @@ export function SettingsPage() {
           )}
           <YomTovEndField value={draft.yom_tov_end_minutes ?? 42} onChange={(v) => set("yom_tov_end_minutes", v)} />
         </div>
-        <div className="sb-row" style={{ gap: 20 }}>
-          <Check checked={draft.israel} onChange={(v) => set("israel", v)}>Israel (one-day Yom Tov)</Check>
-          <Check checked={draft.use_elevation} onChange={(v) => set("use_elevation", v)}>Use elevation for sunrise/sunset</Check>
+        <div className="sb-stack">
+          <div className="sb-row" style={{ gap: 20 }}>
+            <Check checked={draft.israel} onChange={(v) => set("israel", v)}>Israel (Eretz Yisrael)</Check>
+            <Check checked={draft.use_elevation} onChange={(v) => set("use_elevation", v)}>Use elevation for sunrise/sunset</Check>
+          </div>
+          <p className="sb-hint">
+            One-day Yom Tov and the Israel Torah reading (פרשת השבוע). Unchecked is Chutz La'aretz.
+            On setup this starts from Home Assistant: checked if the country is Israel or the map pin is in Israel.
+            After that, this box is what ShabBOT uses.
+          </p>
         </div>
         <div className="sb-grid-2">
           <Field label="Latitude" hint={`Blank = Home Assistant's (${loc.latitude.toFixed(4)})`}>
@@ -173,7 +180,7 @@ export function SettingsPage() {
       </div>
 
       <AnnouncementsCard draft={draft} set={set} dirty={dirty} dryRun={draft.dry_run} onNotice={setNotice}
-        defaultPronunciations={data.meta.default_settings?.announce_pronunciations} />
+        defaults={data.meta.default_settings} />
 
       <SaveBar dirty={dirty} saving={saving} error={error} onSave={save} onReset={reset} />
 

@@ -21,16 +21,27 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.util import dt as dt_util
 
-from .announcer import Announcer
-from .const import PLAN_HORIZON_DAYS, POLL_SECONDS, SIGNAL_ACTIVITY, SIGNAL_UPDATE
-from .core import astro, gestures, jcal, planner
+from .const import EVENT_DAY_ROLLOVER, PLAN_HORIZON_DAYS, POLL_SECONDS, SIGNAL_ACTIVITY, SIGNAL_UPDATE
+from .core import astro, dayinfo, gestures, jcal, planner
 from .store import ShabbotStore, device_config
+from .voice.announcer import Announcer
+from .voice.briefing import cacheable_briefing, stable_briefing_moment
+from .voice.gate import voice_module_enabled
+from .voice.lexicon import async_spoken
 
 _LOGGER = logging.getLogger(__name__)
 
 OFF_STATES = {"off", "closed", "standby", "idle", "paused"}
 ECHO_SECONDS = 20  # a state matching our last command within this window is our own echo
 SERVICE_TIMEOUT = 30
+
+
+def _next_civil_midnight(now: datetime) -> datetime:
+    """The next local midnight strictly after ``now``."""
+    upcoming = datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=now.tzinfo)
+    if upcoming <= now:
+        upcoming = datetime.combine(now.date() + timedelta(days=2), time.min, tzinfo=now.tzinfo)
+    return upcoming
 
 
 def _hhmm(value: str | None) -> time | None:
@@ -94,6 +105,8 @@ class ShabbotManager:
         self._event_unsubs: list[CALLBACK_TYPE] = []
         self._boundary_unsub: CALLBACK_TYPE | None = None
         self._block_unsub: CALLBACK_TYPE | None = None
+        self._rollover_unsubs: dict[str, CALLBACK_TYPE] = {}
+        self._stopped = False
         self._next_boundary: datetime | None = None
         self.announcer = Announcer(self)
 
@@ -132,25 +145,32 @@ class ShabbotManager:
             early_shabbat_after=_hhmm(s.get("early_shabbat_after")) if s.get("early_shabbat") else None,
         )
 
+    def day_info(self, when: date | datetime | None = None) -> dayinfo.DayInfo:
+        """Hebrew date, parasha, Daf Yomi, and zmanim. Omit ``when`` for the current moment."""
+        return dayinfo.build_day_info(self.now() if when is None else when, self.location, self.minhag)
+
     def now(self) -> datetime:
         return dt_util.now().astimezone(self.location.tzinfo)
 
     # ------------------------------------------------------------ lifecycle
 
     async def async_start(self) -> None:
+        self._stopped = False
         self.rebuild()
         self._unsubs.append(async_track_time_interval(self.hass, self._poll, timedelta(seconds=POLL_SECONDS)))
         self._unsubs.append(async_track_time_change(self.hass, self._daily, hour=0, minute=5, second=0))
         await self.async_reconcile("Home Assistant started")
 
     async def async_stop(self) -> None:
+        self._stopped = True
         for unsub in [*self._unsubs, *self._event_unsubs, *self._pending_revert.values(),
-                      *self._override_timers.values()]:
+                      *self._override_timers.values(), *self._rollover_unsubs.values()]:
             unsub()
         for unsub in (self._state_unsub, self._boundary_unsub, self._block_unsub):
             if unsub:
                 unsub()
         self._unsubs.clear()
+        self._rollover_unsubs.clear()
         await self.announcer.async_stop()
         await self.store.async_flush()
 
@@ -181,7 +201,63 @@ class ShabbotManager:
         self._schedule_next_boundary()
         self._schedule_block_change()
         self.announcer.reschedule()
+        self._schedule_day_rollovers()
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+
+    def _next_rollover_at(self, reason: str) -> datetime:
+        now = self.now()
+        if reason == "midnight":
+            return _next_civil_midnight(now)
+        return dayinfo.next_rollover(now, self.location, self.minhag)
+
+    def _schedule_day_rollovers(self) -> None:
+        """Arm civil midnight and the next shkia. Nothing is fired from startup itself."""
+        if self._stopped:
+            return
+        self._arm_rollover("midnight", self._next_rollover_at("midnight"))
+        self._arm_rollover("shkia", self._next_rollover_at("shkia"))
+
+    def _arm_rollover(self, reason: str, when: datetime) -> None:
+        previous = self._rollover_unsubs.pop(reason, None)
+        if previous:
+            previous()
+        if when <= self.now():
+            return
+        self._rollover_unsubs[reason] = async_track_point_in_time(
+            self.hass, partial(self._on_day_rollover, reason), when,
+        )
+
+    @callback
+    def _on_day_rollover(self, reason: str, fired: datetime) -> None:
+        self.hass.async_create_task(self._emit_day_rollover(reason, fired))
+
+    async def _emit_day_rollover(self, reason: str, fired: datetime) -> None:
+        try:
+            if not self._stopped:
+                await self._fire_day_rollover(reason, fired)
+        finally:
+            if not self._stopped:
+                self._arm_rollover(reason, self._next_rollover_at(reason))
+
+    async def _fire_day_rollover(self, reason: str, fired: datetime) -> None:
+        """Publish the window that starts at this boundary so automations can pre-render it."""
+        local = fired.astimezone(self.location.tzinfo)
+        anchor, window = stable_briefing_moment(local, self.day_info(local).time("shkia"))
+        info = self.day_info(anchor)
+        payload = info.as_dict()
+        text = payload["summary"]
+        briefing = cacheable_briefing(self.settings, info)
+        self.hass.bus.async_fire(EVENT_DAY_ROLLOVER, {
+            "reason": reason,
+            "at": local.isoformat(),
+            "window": window,
+            "text": text,
+            "spoken": await async_spoken(self.hass, text, self.settings),
+            "briefing_text": briefing,
+            "briefing_spoken": await async_spoken(self.hass, briefing, self.settings),
+            "voice_enabled": voice_module_enabled(self.settings),
+            "day": payload,
+        })
 
     def managed_entities(self) -> list[str]:
         return sorted(set(self.timeline.entities) | set(self.config["devices"]))

@@ -13,12 +13,12 @@ const dark = params.get("theme") === "dark";
 const narrow = params.has("narrow");
 
 const TEMPLATES = {
-  candle: "{minutes} {unit} until candle lighting",
-  shkia: "{minutes} {unit} until shkia",
-  shkia_final: "Shkia in {minutes_words}. Stop all melacha.",
-  motzei: "It's now {minutes} {unit} after shkia and it's muttar to do melacha.",
-  yt_candle: "{minutes} {unit} until you can start preparing for the next meal",
-  yt_candle_now: "You can now start preparing for the next meal.",
+  candle: "{About} until candle lighting, {time}.",
+  shkia: "{About} until shkia.",
+  shkia_final: "Shkia is in {about}. Time to stop all melacha.",
+  motzei: "It's motzei Shabbat. Havdalah is {about} after shkia, and melacha is permitted.",
+  yt_candle: "{About} until you can start getting the next meal ready.",
+  yt_candle_now: "You can start getting the next meal ready now.",
 };
 
 const GROUPS: AnnounceGroups = {
@@ -45,6 +45,7 @@ const saved: Settings = {
   storm_window_min: 2,
   notify_service: "",
   notify_overrides: false,
+  voice_enabled: true,
   announce_enabled: true,
   announce_players: ["media_player.kitchen", "media_player.living_room"],
   announce_tts_entity: "tts.google_translate_en_com",
@@ -68,17 +69,22 @@ const saved: Settings = {
     havdalah: "hahv-dah-lah",
     "rosh hashana": "rohsh hah-shah-nah",
   },
+  briefing_template: "Good morning. Today is {hebrew_date}. {reading} Daf Yomi is {daf}. {zmanim}{countdown}{weather}{notes}",
+  briefing_weather_entity: "weather.home",
+  briefing_notes_entity: "",
+  briefing_notes_until: "",
+  tts_lexicon_path: "",
 };
 
 const UPCOMING: AnnounceUpcoming["items"] = [
-  { at: "2026-10-09T17:06:00-04:00", kind: "candle", minutes: 60, message: "60 minutes until candle lighting" },
-  { at: "2026-10-09T17:36:00-04:00", kind: "candle", minutes: 30, message: "30 minutes until candle lighting" },
-  { at: "2026-10-09T17:51:00-04:00", kind: "candle", minutes: 15, message: "15 minutes until candle lighting" },
-  { at: "2026-10-09T18:01:00-04:00", kind: "candle", minutes: 5, message: "5 minutes until candle lighting" },
-  { at: "2026-10-09T18:09:00-04:00", kind: "shkia", minutes: 15, message: "15 minutes until shkia" },
-  { at: "2026-10-09T18:19:00-04:00", kind: "shkia", minutes: 5, message: "5 minutes until shkia" },
-  { at: "2026-10-09T18:23:00-04:00", kind: "shkia_final", minutes: 1, message: "Shkia in one minute. Stop all melacha." },
-  { at: "2026-10-10T19:24:00-04:00", kind: "motzei", minutes: 60, message: "It's now 60 minutes after shkia and it's muttar to do melacha." },
+  { at: "2026-10-09T17:06:00-04:00", kind: "candle", minutes: 60, message: "About an hour until candle lighting, at 6:08." },
+  { at: "2026-10-09T17:36:00-04:00", kind: "candle", minutes: 30, message: "About half an hour until candle lighting, at 6:08." },
+  { at: "2026-10-09T17:51:00-04:00", kind: "candle", minutes: 15, message: "About fifteen minutes until candle lighting, at 6:08." },
+  { at: "2026-10-09T18:01:00-04:00", kind: "candle", minutes: 5, message: "About five minutes until candle lighting, at 6:08." },
+  { at: "2026-10-09T18:09:00-04:00", kind: "shkia", minutes: 15, message: "About fifteen minutes until shkia." },
+  { at: "2026-10-09T18:19:00-04:00", kind: "shkia", minutes: 5, message: "About five minutes until shkia." },
+  { at: "2026-10-09T18:23:00-04:00", kind: "shkia_final", minutes: 1, message: "Shkia is in about a minute. Time to stop all melacha." },
+  { at: "2026-10-10T19:24:00-04:00", kind: "motzei", minutes: 60, message: "It's motzei Shabbat. Havdalah is about an hour after shkia, and melacha is permitted." },
 ];
 
 function entity(id: string, name: string): HassEntity {
@@ -94,7 +100,7 @@ function previewUpcoming(settings: Settings): AnnounceUpcoming {
     if (item.kind === "motzei") return groups.motzei;
     return groups.yt_candle;
   });
-  return { enabled: settings.announce_enabled, items: items.slice(0, 8) };
+  return { enabled: settings.voice_enabled && settings.announce_enabled, items: items.slice(0, 8) };
 }
 
 const hass: Hass = {

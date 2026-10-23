@@ -8,7 +8,7 @@
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/aniceberg/ShabBOT/issues",
-  "requirements": ["pyluach==2.3.0"],
+  "requirements": ["pyluach==2.3.0", "hdate[astral]==1.2.1"],
   "single_config_entry": true,
-  "version": "0.2.5-announce.2"
+  "version": "0.2.5-announce.6"
 }

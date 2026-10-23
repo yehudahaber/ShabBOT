@@ -21,7 +21,9 @@ from .const import (
     STORAGE_KEY_CONFIG,
     STORAGE_VERSION,
 )
-from .core.announcements import coerce_templates
+from .voice.announcements import coerce_templates
+from .voice.briefing import coerce_briefing_template
+from .voice.gate import migrate_voice_settings
 
 
 def new_id() -> str:
@@ -68,10 +70,18 @@ class ShabbotStore:
         else:
             self.config = data
             self.config.setdefault("settings", {})
-            self.config["settings"] = {**DEFAULT_SETTINGS, **self.config["settings"]}
+            raw_settings = dict(self.config["settings"])
+            self.config["settings"] = {**DEFAULT_SETTINGS, **raw_settings}
+            self.config["settings"].update(migrate_voice_settings(raw_settings))
             stored_templates = self.config["settings"].get("announce_templates")
             if isinstance(stored_templates, dict):
                 self.config["settings"]["announce_templates"] = coerce_templates(stored_templates)
+            try:
+                self.config["settings"]["briefing_template"] = coerce_briefing_template(
+                    self.config["settings"].get("briefing_template"),
+                )
+            except ValueError:
+                self.config["settings"]["briefing_template"] = DEFAULT_SETTINGS["briefing_template"]
             for key, empty in (("routines", {}), ("rules", []), ("modes", []), ("assignments", {}), ("devices", {})):
                 self.config.setdefault(key, empty)
         activity = await self._activity_store.async_load()

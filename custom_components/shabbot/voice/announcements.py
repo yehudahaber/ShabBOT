@@ -62,8 +62,9 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from . import jcal
+from ..core import dayinfo, jcal
 from .pronounce import DEFAULT_PRONUNCIATIONS, coerce_pronunciations
+from .wording import about_minutes, capitalize_phrase, natural_time
 
 CANDLE = "candle"
 SHKIA = "shkia"
@@ -77,17 +78,36 @@ MARK_MAX = 12 * 60
 LEAD_MAX = 300
 
 DEFAULT_TEMPLATES: dict[str, str] = {
-    "candle": "{minutes} {unit} until candle lighting",
-    "shkia": "{minutes} {unit} until shkia",
-    "shkia_final": "Shkia in {minutes_words}. Stop all melacha.",
-    "motzei": "It's now {minutes} {unit} after shkia and it's muttar to do melacha.",
-    "yt_candle": "{minutes} {unit} until you can start preparing for the next meal",
-    "yt_candle_now": "You can now start preparing for the next meal.",
+    "candle": "{About} until candle lighting, {time}.",
+    "shkia": "{About} until shkia.",
+    "shkia_final": "Shkia is in {about}. Time to stop all melacha.",
+    "motzei": "It's motzei {occasion}. Havdalah is {about} after shkia, and melacha is permitted.",
+    "yt_candle": "{About} until you can start getting the next meal ready.",
+    "yt_candle_now": "You can start getting the next meal ready now.",
 }
-# Sentences from the first draft of this branch. Treated as unset so the preparation wording takes over.
-_RETIRED_TEMPLATES = {
-    "yt_candle": "{minutes} {unit} until candle lighting. Light from an existing flame.",
-    "yt_candle_now": "Light candles now from an existing flame.",
+# Earlier default sentences. A saved copy of one of these upgrades to the current default.
+# A sentence the user actually rewrote is left alone.
+_RETIRED_TEMPLATES: dict[str, frozenset[str]] = {
+    "candle": frozenset({"{minutes} {unit} until candle lighting"}),
+    "shkia": frozenset({"{minutes} {unit} until shkia"}),
+    "shkia_final": frozenset({"Shkia in {minutes_words}. Stop all melacha."}),
+    "motzei": frozenset({"It's now {minutes} {unit} after shkia and it's muttar to do melacha."}),
+    "yt_candle": frozenset({
+        "{minutes} {unit} until candle lighting. Light from an existing flame.",
+        "{minutes} {unit} until you can start preparing for the next meal",
+    }),
+    "yt_candle_now": frozenset({
+        "Light candles now from an existing flame.",
+        "You can now start preparing for the next meal.",
+    }),
+}
+_ZMAN_NAME = {
+    CANDLE: "candle lighting",
+    SHKIA: "shkia",
+    SHKIA_FINAL: "shkia",
+    MOTZEI: "havdalah",
+    YT_CANDLE: "the next meal",
+    YT_CANDLE_NOW: "the next meal",
 }
 DEFAULT_CANDLE_MARKS = (60, 30, 15, 5)
 DEFAULT_SHKIA_MARKS = (60, 30, 15, 5)
@@ -101,6 +121,7 @@ END_ON_TIME_KINDS = frozenset({SHKIA_FINAL})
 
 # Merged into the integration settings. Nested values are replaced wholesale on save.
 ANNOUNCE_DEFAULTS: dict[str, Any] = {
+    "voice_enabled": False,
     "announce_enabled": False,
     "announce_players": [],
     "announce_tts_entity": "",
@@ -109,6 +130,10 @@ ANNOUNCE_DEFAULTS: dict[str, Any] = {
     "announce_lead_seconds": 0,
     "announce_player_leads": {},
     "announce_volume": None,
+    "announce_repeat": "once",
+    "announce_cue": False,
+    "announce_gap_ms": 400,
+    "announce_cue_media_id": "",
     "announce_candle_marks": list(DEFAULT_CANDLE_MARKS),
     "announce_shkia_marks": list(DEFAULT_SHKIA_MARKS),
     "announce_yt_marks": list(DEFAULT_YT_MARKS),
@@ -205,6 +230,49 @@ def coerce_volume(value: Any) -> int | None:
     return number
 
 
+REPEAT_PLAYS: dict[str, int] = {"once": 1, "twice": 2}
+DEFAULT_GAP_MS = 400
+MAX_GAP_MS = 5000
+# Length assumed for a user-supplied cue, whose duration is not read.
+CUSTOM_CUE_SECONDS = 1.0
+
+
+def coerce_repeat(value: Any) -> str:
+    text = str(value or "once").strip().lower()
+    if text not in REPEAT_PLAYS:
+        raise ValueError("Repeat must be once or twice")
+    return text
+
+
+def coerce_gap_ms(value: Any) -> int:
+    number = _whole(DEFAULT_GAP_MS if value in (None, "") else value, "Gap")
+    if not 0 <= number <= MAX_GAP_MS:
+        raise ValueError(f"Gap must be between 0 and {MAX_GAP_MS} ms")
+    return number
+
+
+def _gap_or_default(value: Any) -> int:
+    try:
+        return coerce_gap_ms(value)
+    except ValueError:
+        return DEFAULT_GAP_MS
+
+
+def playback_seconds(
+    clip_seconds: float, *, repeat: int, cue_seconds: float | None, gap_ms: int,
+) -> float:
+    """Total time from the first sound to the end of the last play.
+
+    A cue (when ``cue_seconds`` is set) and every spoken play are separated by one gap.
+    """
+    gap = gap_ms / 1000
+    plays = max(1, repeat)
+    total = clip_seconds * plays + gap * (plays - 1)
+    if cue_seconds is not None:
+        total += cue_seconds + gap
+    return total
+
+
 def coerce_players(value: Any) -> tuple[str, ...]:
     if value in (None, "", []):
         return ()
@@ -264,7 +332,7 @@ def coerce_templates(value: Any, *, strict: bool = False) -> dict[str, str]:
             raise ValueError(f"Template {key} must be text")
         if len(text) > 400:
             raise ValueError(f"Template {key} is too long")
-        merged[key] = DEFAULT_TEMPLATES[key] if text == _RETIRED_TEMPLATES.get(key) else text
+        merged[key] = DEFAULT_TEMPLATES[key] if text in _RETIRED_TEMPLATES.get(key, ()) else text
     return merged
 
 
@@ -289,6 +357,10 @@ class AnnounceOptions:
     lead_seconds: int
     player_leads: dict[str, int]
     volume: int | None
+    repeat: int
+    cue: bool
+    gap_ms: int
+    cue_media_id: str
     candle_marks: tuple[int, ...]
     shkia_marks: tuple[int, ...]
     yt_marks: tuple[int, ...]
@@ -340,6 +412,10 @@ def options_from_settings(settings: dict[str, Any] | None) -> AnnounceOptions:
             pronunciations = dict(DEFAULT_PRONUNCIATIONS)
     return AnnounceOptions(
         enabled=bool(s.get("announce_enabled")),
+        repeat=REPEAT_PLAYS.get(str(s.get("announce_repeat") or "once").lower(), 1),
+        cue=s.get("announce_cue") is True,
+        gap_ms=_gap_or_default(s.get("announce_gap_ms")),
+        cue_media_id=str(s.get("announce_cue_media_id") or "").strip(),
         players=players,
         tts_entity=str(s.get("announce_tts_entity") or "").strip(),
         voice=str(s.get("announce_voice") or "").strip(),
@@ -380,6 +456,17 @@ class ScheduledCall:
     lead_seconds: int
 
 
+def _closing_name(block: jcal.Block) -> str:
+    """What motzei is leaving: Shabbat, or the Yom Tov that is actually ending."""
+    last = block.days[-1]
+    if last.weekday() == 5:
+        return "Shabbat"
+    for slot in reversed(block.slots):
+        if slot.day == last and slot.holiday:
+            return slot.holiday.name
+    return "Yom Tov"
+
+
 def _occasion(is_shabbat: bool, holiday: jcal.Holiday | None) -> str:
     if holiday and is_shabbat:
         return f"{holiday.name} on Shabbat"
@@ -413,18 +500,43 @@ def havdalah_minutes_spoken(block: jcal.Block, minhag: jcal.Minhag) -> int:
 
 def plan_announcements(
     blocks: list[jcal.Block], minhag: jcal.Minhag, options: AnnounceOptions,
+    *, location: Any = None,
 ) -> list[Announcement]:
-    """Every announcement for these blocks, in speaking order."""
+    """Every announcement for these blocks, in speaking order.
+
+    ``location`` fills ``{parasha}``, ``{hebrew_date}``, and ``{daf}``. The
+    default sentences do not need it.
+    """
     events: list[Announcement] = []
+    cache: dict[str, dict[str, str]] = {}
+
+    def day_fields(moment: datetime) -> dict[str, str]:
+        if location is None:
+            return {"parasha": "", "hebrew_date": "", "daf": ""}
+        key = moment.isoformat()
+        if key not in cache:
+            info = dayinfo.build_day_info(moment, location, minhag)
+            cache[key] = {
+                "parasha": info.reading_english,
+                "hebrew_date": info.hebrew_date.english,
+                "daf": f"{info.masechet} {info.daf}",
+            }
+        return cache[key]
 
     def add(kind: str, when: datetime, minutes: int, slot: jcal.Slot | None, block: jcal.Block,
-            occasion: str) -> None:
+            occasion: str, event_at: datetime) -> None:
+        about = about_minutes(minutes)
         fields = {
             "minutes": minutes,
             "unit": "minute" if minutes == 1 else "minutes",
             "minutes_words": minutes_words(minutes),
+            "about": about,
+            "About": capitalize_phrase(about),
+            "time": natural_time(event_at),
+            "zman_name": _ZMAN_NAME.get(kind, occasion),
             "occasion": occasion,
             "title": block.title,
+            **day_fields(when),
         }
         message = _message(kind, options.templates, fields)
         if message is None:
@@ -454,12 +566,12 @@ def plan_announcements(
             if candle > sunset:
                 if groups.get(YT_CANDLE, True):
                     for minutes in options.yt_marks:
-                        add(YT_CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion)
-                    add(YT_CANDLE_NOW, candle, 0, slot, block, occasion)
+                        add(YT_CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion, candle)
+                    add(YT_CANDLE_NOW, candle, 0, slot, block, occasion, candle)
                 continue
             if groups.get(CANDLE, True):
                 for minutes in options.candle_marks:
-                    add(CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion)
+                    add(CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion, candle)
             final_on = groups.get(SHKIA_FINAL, True)
             final_at = shift(sunset, -options.shkia_final_min * 60)
             if groups.get(SHKIA, True):
@@ -468,16 +580,16 @@ def plan_announcements(
                     # Only after candles are lit, and don't speak over the final warning.
                     if at <= candle or (final_on and at == final_at):
                         continue
-                    add(SHKIA, at, minutes, slot, block, occasion)
+                    add(SHKIA, at, minutes, slot, block, occasion, sunset)
             if final_on and final_at > candle:
-                add(SHKIA_FINAL, final_at, options.shkia_final_min, slot, block, occasion)
+                add(SHKIA_FINAL, final_at, options.shkia_final_min, slot, block, occasion, sunset)
         if (
             options.groups.get(MOTZEI, True)
             and block.slots
             and block.slots[-1].anchors.get("sunset") is not None
         ):
             minutes = havdalah_minutes_spoken(block, minhag)
-            add(MOTZEI, block.end, minutes, None, block, block.title)
+            add(MOTZEI, block.end, minutes, None, block, _closing_name(block), block.end)
 
     events.sort(key=lambda event: (event.nominal_at, event.kind, event.id))
     return events

@@ -4,7 +4,9 @@ from datetime import date, datetime, time, timedelta
 
 import pytest
 
-from custom_components.shabbot.core import announcements, astro, jcal
+from custom_components.shabbot.core import astro, jcal
+from custom_components.shabbot.voice import announcements
+from custom_components.shabbot.voice.wording import about_minutes, natural_time
 
 BROOKLYN = astro.Location(40.6501, -73.94958, "America/New_York", 18)
 TZ = BROOKLYN.tzinfo
@@ -43,12 +45,14 @@ def test_plain_shabbat_countdown_and_motzei_text() -> None:
     sunset = block.slots[0].anchors["sunset"]
     candle60 = _by(events, "candle", block.days[0], 60)
     assert candle60.nominal_at == block.start - timedelta(minutes=60)
-    assert candle60.message == "60 minutes until candle lighting"
-    assert _by(events, "candle", block.days[0], 5).message == "5 minutes until candle lighting"
+    assert candle60.message == f"About an hour until candle lighting, {natural_time(block.start)}."
+    assert _by(events, "candle", block.days[0], 5).message == (
+        f"About five minutes until candle lighting, {natural_time(block.start)}."
+    )
 
     final = _by(events, "shkia_final", block.days[0])
     assert final.nominal_at == sunset - timedelta(minutes=1)
-    assert final.message == "Shkia in one minute. Stop all melacha."
+    assert final.message == "Shkia is in about a minute. Time to stop all melacha."
     # 18 minutes before sunset: a 60- or 30-minute shkia warning is still before candles.
     shkia_marks = [e.minutes for e in events if e.kind == "shkia" and e.day == block.days[0]]
     assert shkia_marks == [15, 5]
@@ -57,7 +61,9 @@ def test_plain_shabbat_countdown_and_motzei_text() -> None:
     motzei = _by(events, "motzei")
     assert motzei.nominal_at == block.end
     assert motzei.minutes == 60
-    assert motzei.message == "It's now 60 minutes after shkia and it's muttar to do melacha."
+    assert motzei.message == (
+        "It's motzei Shabbat. Havdalah is about an hour after shkia, and melacha is permitted."
+    )
     assert not any(e.kind.startswith("yt_") for e in events)
 
 
@@ -67,7 +73,9 @@ def test_motzei_uses_configured_havdalah_minutes(minutes: int) -> None:
     block, events = _plan(date(2026, 10, 10), minhag)
     motzei = _by(events, "motzei")
     assert motzei.nominal_at == block.end
-    assert motzei.message == f"It's now {minutes} minutes after shkia and it's muttar to do melacha."
+    assert motzei.message == (
+        f"It's motzei Shabbat. Havdalah is {about_minutes(minutes)} after shkia, and melacha is permitted."
+    )
 
 
 def test_degrees_mode_motzei_uses_the_actual_gap() -> None:
@@ -78,7 +86,9 @@ def test_degrees_mode_motzei_uses_the_actual_gap() -> None:
     motzei = _by(events, "motzei")
     assert motzei.nominal_at == block.end
     assert motzei.minutes == spoken
-    assert str(spoken) in motzei.message
+    assert motzei.message == (
+        f"It's motzei Shabbat. Havdalah is {about_minutes(spoken)} after shkia, and melacha is permitted."
+    )
     assert spoken != minhag.havdalah_minutes
 
 
@@ -98,8 +108,10 @@ def test_blank_template_skips_and_broken_template_falls_back() -> None:
     assert not any(e.kind == "shkia_final" for e in skipped)
     assert any(e.kind == "candle" for e in skipped)
 
-    _, fallback = _plan(date(2026, 10, 10), announce_templates={"candle": "{minutes"})
-    assert _by(fallback, "candle", minutes=60).message == "60 minutes until candle lighting"
+    block, fallback = _plan(date(2026, 10, 10), announce_templates={"candle": "{minutes"})
+    assert _by(fallback, "candle", minutes=60).message == (
+        f"About an hour until candle lighting, {natural_time(block.start)}."
+    )
 
 
 def test_early_shabbat_countdown_follows_the_early_time_and_shkia_does_not() -> None:
@@ -140,9 +152,9 @@ def test_pesach_chain_keeps_issur_until_the_real_end() -> None:
     assert {e.kind for e in second} == {"yt_candle", "yt_candle_now"}
     now = _by(events, "yt_candle_now", date(2027, 4, 23))
     assert now.nominal_at == nights[1].start
-    assert now.message == "You can now start preparing for the next meal."
+    assert now.message == "You can start getting the next meal ready now."
     assert _by(events, "yt_candle", date(2027, 4, 23), 30).message == (
-        "30 minutes until you can start preparing for the next meal"
+        "About half an hour until you can start getting the next meal ready."
     )
 
     # Into Shabbat: candles before shkia again, including the stop-melacha warning.
@@ -155,7 +167,9 @@ def test_pesach_chain_keeps_issur_until_the_real_end() -> None:
     _offset(block.end, block.slots[-1].anchors["sunset"], 60)
     motzei = [e for e in events if e.kind == "motzei"]
     assert len(motzei) == 1 and motzei[0].nominal_at == block.end
-    assert motzei[0].message == "It's now 60 minutes after shkia and it's muttar to do melacha."
+    assert motzei[0].message == (
+        "It's motzei Shabbat. Havdalah is about an hour after shkia, and melacha is permitted."
+    )
 
 
 def test_shabbat_into_rosh_hashana_has_no_muttar_on_saturday_night() -> None:
@@ -177,7 +191,9 @@ def test_shabbat_into_rosh_hashana_has_no_muttar_on_saturday_night() -> None:
     motzei = [e for e in events if e.kind == "motzei"]
     assert len(motzei) == 1
     assert motzei[0].nominal_at == block.end
-    assert motzei[0].message == "It's now 42 minutes after shkia and it's muttar to do melacha."
+    assert "about forty minutes after shkia" in motzei[0].message
+    assert motzei[0].message.startswith("It's motzei ")
+    assert "melacha is permitted" in motzei[0].message
 
 
 def test_two_day_yom_tov_away_from_shabbat() -> None:
@@ -195,7 +211,9 @@ def test_two_day_yom_tov_away_from_shabbat() -> None:
     assert any(e.kind == "yt_candle" and e.day == block.days[1] for e in events)
     assert not any(e.kind in ("candle", "shkia", "shkia_final") and e.day == block.days[1] for e in events)
     assert _by(events, "motzei").nominal_at == block.end
-    assert _by(events, "motzei").message == "It's now 42 minutes after shkia and it's muttar to do melacha."
+    assert "about forty minutes after shkia" in _by(events, "motzei").message
+    assert _by(events, "motzei").message.startswith("It's motzei ")
+    assert "Shabbat" not in _by(events, "motzei").message
     plain = next(b for b in blocks if len(b.days) == 1 and b.days[0].weekday() == 5)
     _offset(plain.end, plain.slots[-1].anchors["sunset"], 60)
 
@@ -208,7 +226,9 @@ def test_israel_one_day_pesach_ends_at_the_yom_tov_offset() -> None:
     assert block.days[0].weekday() != 5
     assert not any(e.kind.startswith("yt_") for e in events)
     _offset(block.end, block.slots[-1].anchors["sunset"], 42)
-    assert _by(events, "motzei").message == "It's now 42 minutes after shkia and it's muttar to do melacha."
+    assert "about forty minutes after shkia" in _by(events, "motzei").message
+    assert _by(events, "motzei").message.startswith("It's motzei ")
+    assert "Shabbat" not in _by(events, "motzei").message
 
 
 # ---------------------------------------------------------------- lead and DST
@@ -368,10 +388,16 @@ def test_retired_candle_wording_becomes_the_preparation_sentence() -> None:
             "yt_candle_now": "Light candles now from an existing flame.",
         },
     })
-    assert options.templates["yt_candle"] == (
-        "{minutes} {unit} until you can start preparing for the next meal"
-    )
-    assert options.templates["yt_candle_now"] == "You can now start preparing for the next meal."
+    assert options.templates["yt_candle"] == announcements.DEFAULT_TEMPLATES["yt_candle"]
+    assert options.templates["yt_candle_now"] == announcements.DEFAULT_TEMPLATES["yt_candle_now"]
+    kept = announcements.options_from_settings({
+        "announce_templates": {"candle": "Light candles, {minutes} minutes left."},
+    })
+    assert kept.templates["candle"] == "Light candles, {minutes} minutes left."
+    upgraded = announcements.options_from_settings({
+        "announce_templates": {"candle": "{minutes} {unit} until candle lighting"},
+    })
+    assert upgraded.templates["candle"] == announcements.DEFAULT_TEMPLATES["candle"]
 
 
 def test_missing_group_flags_stay_on() -> None:
@@ -380,6 +406,40 @@ def test_missing_group_flags_stay_on() -> None:
         "candle": True, "shkia": True, "shkia_final": True, "motzei": True, "yt_candle": True,
     }
     assert options.yt_marks == (60, 30, 15, 5)
+
+
+def test_template_placeholders_use_the_day_and_a_natural_time() -> None:
+    from custom_components.shabbot.core.dayinfo import build_day_info
+
+    minhag = jcal.Minhag(havdalah_mode="minutes", havdalah_minutes=60)
+    day = date(2026, 10, 10)
+    blocks = [b for b in jcal.blocks_between(day, day, BROOKLYN, minhag) if day in b.days]
+    block = blocks[0]
+    options = announcements.options_from_settings({
+        "announce_templates": {
+            "candle": "{hebrew_date}; {parasha}; {daf}; {zman_name}; {time}; {minutes} minutes",
+        },
+    })
+    events = announcements.plan_announcements([block], minhag, options, location=BROOKLYN)
+    candle = _by(events, "candle", minutes=60)
+    info = build_day_info(candle.nominal_at, BROOKLYN, minhag)
+    assert candle.message == (
+        f"{info.hebrew_date.english}; {info.reading_english}; "
+        f"{info.masechet} {info.daf}; candle lighting; {natural_time(block.start)}; 60 minutes"
+    )
+
+
+def test_about_twenty_minutes_is_how_a_person_says_eighteen() -> None:
+    assert about_minutes(18) == "about twenty minutes"
+    assert about_minutes(20) == "about twenty minutes"
+    assert about_minutes(1) == "about a minute"
+    assert about_minutes(60) == "about an hour"
+    assert about_minutes(42) == "about forty minutes"
+    moment = datetime(2026, 10, 20, 18, 8, tzinfo=TZ)
+    assert natural_time(moment) == "at 6:08"
+    assert natural_time(moment.replace(minute=2)) == "a little after six"
+    assert natural_time(moment.replace(minute=0)) == "at six"
+    assert natural_time(moment.replace(hour=17, minute=58)) == "just before six"
 
 
 def test_settings_schema_accepts_group_toggles_and_sorts_marks() -> None:
@@ -396,3 +456,23 @@ def test_settings_schema_accepts_group_toggles_and_sorts_marks() -> None:
     assert out["announce_yt_marks"] == [60, 5]
     with pytest.raises(vol.Invalid):
         SETTINGS_SCHEMA({"announce_groups": {"nope": True}})
+
+
+def test_playback_span_counts_cue_gaps_and_repeats() -> None:
+    span = announcements.playback_seconds
+    assert span(3.0, repeat=1, cue_seconds=None, gap_ms=400) == 3.0
+    assert span(3.0, repeat=2, cue_seconds=None, gap_ms=400) == pytest.approx(6.4)
+    assert span(3.0, repeat=2, cue_seconds=0.5, gap_ms=400) == pytest.approx(7.3)
+
+
+def test_announce_style_options_are_lenient() -> None:
+    defaults = announcements.options_from_settings({})
+    assert (defaults.repeat, defaults.cue, defaults.gap_ms) == (1, False, 400)
+    chosen = announcements.options_from_settings(
+        {"announce_repeat": "twice", "announce_cue": True, "announce_gap_ms": 300},
+    )
+    assert (chosen.repeat, chosen.cue, chosen.gap_ms) == (2, True, 300)
+    broken = announcements.options_from_settings({"announce_repeat": "thrice", "announce_gap_ms": "x"})
+    assert (broken.repeat, broken.gap_ms) == (1, 400)
+    with pytest.raises(ValueError):
+        announcements.coerce_repeat("three")

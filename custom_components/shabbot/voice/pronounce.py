@@ -5,7 +5,9 @@ so "Rosh Hashana I" does not also get a second pass on "Rosh Hashana".
 Replacements are plain English syllables, which Piper (en_US) and Kokoro both
 read without engine-specific phonemes.
 
-A stored map replaces the defaults entirely. A missing map means the defaults.
+``apply_pronunciation`` only uses the map it is given. The map that actually
+reaches TTS is built in ``lexicon.effective_lexicon``: the built-in list, then
+the saved rows, then an optional YAML file.
 """
 
 from __future__ import annotations
@@ -36,8 +38,10 @@ DEFAULT_PRONUNCIATIONS: dict[str, str] = {
     "shavuot ii": "shah-voo-oht the second",
     "shavuot i": "shah-voo-oht the first",
     "shavuot": "shah-voo-oht",
+    "motzei shabbat": "moht-zay shah-baht",
     "motzaei shabbat": "moht-zay shah-baht",
     "yom tov": "yohm tohv",
+    "motzei": "moht-zay",
     "motzaei": "moht-zay",
     "shabbat": "shah-baht",
     "shabbos": "shah-bus",
@@ -74,7 +78,7 @@ def apply_pronunciation(text: str, mapping: dict[str, str] | None) -> str:
     return spoken
 
 
-def coerce_pronunciations(value: Any) -> dict[str, str]:
+def coerce_pronunciations(value: Any, *, max_entries: int = _MAX_ENTRIES) -> dict[str, str]:
     """Validate a user map. This does not fill in defaults; the caller does that when the key is absent."""
     if value in (None, {}):
         return {}
@@ -95,6 +99,6 @@ def coerce_pronunciations(value: Any) -> dict[str, str]:
         if len(says) > _MAX_VALUE:
             raise ValueError(f"Pronunciation for {key} is too long")
         cleaned[key] = says
-    if len(cleaned) > _MAX_ENTRIES:
-        raise ValueError(f"At most {_MAX_ENTRIES} pronunciations")
+    if len(cleaned) > max_entries:
+        raise ValueError(f"At most {max_entries} pronunciations")
     return cleaned
