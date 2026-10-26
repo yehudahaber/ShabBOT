@@ -8,6 +8,7 @@ const KIND: Record<string, { label: string; cls: string }> = {
   command: { label: "Scheduled", cls: "sb-badge-accent" },
   revert: { label: "Reverted", cls: "sb-badge-warn" },
   dry_run: { label: "Dry run", cls: "" },
+  simulation: { label: "Test", cls: "sb-badge-warn" },
   override_start: { label: "Override", cls: "sb-badge-candle" },
   override_end: { label: "Resumed", cls: "sb-badge-ok" },
   storm: { label: "Gave up", cls: "sb-badge-danger" },
@@ -19,7 +20,7 @@ const KIND: Record<string, { label: string; cls: string }> = {
 type Filter = "all" | "changes" | "overrides" | "problems";
 const FILTERS: Record<Filter, (k: string) => boolean> = {
   all: () => true,
-  changes: (k) => ["command", "revert", "dry_run"].includes(k),
+  changes: (k) => ["command", "revert", "dry_run", "simulation"].includes(k),
   overrides: (k) => k.startsWith("override"),
   problems: (k) => ["error", "storm"].includes(k),
 };

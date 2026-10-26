@@ -626,3 +626,58 @@ async def test_announce_style_repeat_cue_and_single_run(
     manager.settings.update({"announce_repeat": "once", "announce_cue": False})
     await manager.announcer.async_speak_test("shkia")
     assert len(played) == 1
+
+
+
+async def test_simulation_api_switches_devices_even_in_dry_run(hass: HomeAssistant, manager: ShabbotManager,
+                                                               hass_ws_client) -> None:
+    client = await hass_ws_client(hass)
+    manager.settings["dry_run"] = True  # the test still moves real devices
+    await client.send_json_auto_id({"type": "shabbot/simulate/steps", "start": "2026-10-09T17:00",
+                                    "end": "2026-10-10T21:00"})
+    steps = (await client.receive_json())["result"]
+    chandelier_on = next(s for s in steps for c in s["commands"]
+                         if c["entity_id"] == "input_boolean.chandelier" and c["state"] == "on")
+    assert chandelier_on["commands"][0]["expr"] == "sunset+18m"
+
+    await client.send_json_auto_id({"type": "shabbot/simulate/apply", "commands": chandelier_on["commands"]})
+    assert not (await client.receive_json())["success"]  # only while test mode runs
+    await client.send_json_auto_id({"type": "shabbot/simulate/start"})
+    assert (await client.receive_json())["success"]
+    await client.send_json_auto_id({"type": "shabbot/simulate/apply", "commands": chandelier_on["commands"]})
+    assert (await client.receive_json())["success"]
+    assert _state(hass, "chandelier") == "on"
+    assert manager.status()["simulation"]
+
+    await client.send_json_auto_id({"type": "shabbot/simulate/stop"})
+    assert (await client.receive_json())["success"]
+    await hass.async_block_till_done()
+    assert _state(hass, "chandelier") == "off"  # back to how it was before the test
+    assert not manager.status()["simulation"]
+
+
+async def test_simulation_pauses_schedule_and_protection(hass: HomeAssistant, manager: ShabbotManager,
+                                                         freezer: FrozenDateTimeFactory) -> None:
+    block, _ = _block_times(manager)
+    await _advance(hass, freezer, block.start - timedelta(minutes=5))
+    manager.start_simulation()
+    await manager.async_simulate_apply([{"entity_id": "input_boolean.bedroom", "state": "on"}])
+    # Shabbat starts mid-test: the baseline "off" isn't sent and nothing is reverted.
+    await _advance(hass, freezer, block.start + timedelta(seconds=1))
+    await _advance(hass, freezer, timedelta(minutes=2))
+    assert _state(hass, "bedroom") == "on"
+    manager.stop_simulation()
+    await hass.async_block_till_done()
+    assert _state(hass, "bedroom") == "off"  # the schedule now wants it off
+    with pytest.raises(ValueError, match="can't run during"):
+        manager.start_simulation()
+
+
+async def test_simulation_restores_and_expires(hass: HomeAssistant, manager: ShabbotManager,
+                                               freezer: FrozenDateTimeFactory) -> None:
+    manager.start_simulation()
+    await manager.async_simulate_apply([{"entity_id": "input_boolean.hotplate", "state": "on"}])
+    assert _state(hass, "hotplate") == "on"
+    await _advance(hass, freezer, timedelta(minutes=31))
+    assert not manager.simulating
+    assert _state(hass, "hotplate") == "off"  # no schedule before Shabbat: back to how it was

@@ -21,7 +21,7 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.util import dt as dt_util
 
-from .const import EVENT_DAY_ROLLOVER, PLAN_HORIZON_DAYS, POLL_SECONDS, SIGNAL_ACTIVITY, SIGNAL_UPDATE
+from .const import EVENT_DAY_ROLLOVER, PLAN_HORIZON_DAYS, POLL_SECONDS, SIGNAL_ACTIVITY, SIGNAL_UPDATE, SIMULATION_IDLE_MINUTES
 from .core import astro, dayinfo, gestures, jcal, planner
 from .store import ShabbotStore, device_config
 from .voice.announcer import Announcer
@@ -109,6 +109,9 @@ class ShabbotManager:
         self._stopped = False
         self._next_boundary: datetime | None = None
         self.announcer = Announcer(self)
+        self.simulation: dict[str, str] | None = None  # test mode session: live engine paused while set
+        self._simulation_timer: CALLBACK_TYPE | None = None
+        self._simulation_before: dict[str, str] = {}  # entity -> on/off before test mode first touched it
 
     # ------------------------------------------------------------ config accessors
 
@@ -166,7 +169,7 @@ class ShabbotManager:
         for unsub in [*self._unsubs, *self._event_unsubs, *self._pending_revert.values(),
                       *self._override_timers.values(), *self._rollover_unsubs.values()]:
             unsub()
-        for unsub in (self._state_unsub, self._boundary_unsub, self._block_unsub):
+        for unsub in (self._state_unsub, self._boundary_unsub, self._block_unsub, self._simulation_timer):
             if unsub:
                 unsub()
         self._unsubs.clear()
@@ -334,22 +337,18 @@ class ShabbotManager:
             self._reverts.pop(entity_id, None)
             if entity_id in self._trackers:
                 self._trackers[entity_id].reset()
-            if entity_id in self.overrides:
-                continue  # the override's own timer re-asserts when it ends
-            desired = self.timeline.desired_at(entity_id, t)
-            if desired is not None:
-                reason = f"{desired.routine_name}"
-                self.hass.async_create_task(self._apply(entity_id, desired.state, desired.attrs, reason))
-            else:
-                ending = self.timeline.ending_at(entity_id, t)
-                if ending and ending.end_state in ("on", "off"):
-                    reason = f"End of {ending.routine_name}"
-                    self.hass.async_create_task(self._apply(entity_id, ending.end_state, {}, reason))
+            if entity_id in self.overrides or self.simulating:
+                continue  # an override re-asserts when it ends; test mode reconciles when it ends
+            command = planner.boundary_command(self.timeline, entity_id, t)
+            if command is not None:
+                self.hass.async_create_task(self._apply(entity_id, command.state, command.attrs, command.reason))
         self._schedule_next_boundary()
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
 
     async def async_reconcile(self, reason: str) -> None:
         """Assert the desired state of every managed entity right now (idempotent)."""
+        if self.simulating:
+            return  # test mode owns the devices until it ends
         now = self.now()
         for entity_id in self.timeline.entities:
             if entity_id in self.overrides:
@@ -375,13 +374,14 @@ class ShabbotManager:
         return bool(expected and expected[1] > dt_util.utcnow() and matches(state, expected[0]))
 
     async def _apply(self, entity_id: str, state: str, attrs: dict[str, Any], reason: str,
-                     kind: str = "command") -> None:
+                     kind: str = "command", force: bool = False) -> None:
+        """Send the service calls for a desired state. `force` (test mode) acts even in dry run."""
         current = self.hass.states.get(entity_id)
         name = current.name if current else entity_id
         if current is None:
             self.log("error", f"{entity_id} not found in Home Assistant", entity_id)
             return
-        if self.settings.get("dry_run"):
+        if self.settings.get("dry_run") and not force:
             self.log("dry_run", f"Would turn {state} {name} — {reason}", entity_id, state=state, would=kind)
             return
         ctx = Context()
@@ -396,7 +396,7 @@ class ShabbotManager:
         except Exception as err:  # noqa: BLE001 - any device failure must not stop the engine
             self.log("error", f"Failed to turn {state} {name}: {err}", entity_id)
             return
-        verb = "Reverted" if kind == "revert" else "Turned"
+        verb = {"revert": "Reverted", "simulation": "Test: turned"}.get(kind, "Turned")
         self.log(kind, f"{verb} {name} {state} — {reason}", entity_id, state=state)
 
     # ------------------------------------------------------------ protection
@@ -406,7 +406,7 @@ class ShabbotManager:
         return mode is None or mode.get("protection", True)
 
     def protected_desired(self, entity_id: str, now: datetime) -> planner.Interval | None:
-        if not self.settings.get("protection") or entity_id in self.paused:
+        if not self.settings.get("protection") or entity_id in self.paused or self.simulating:
             return None
         if not device_config(self.config, entity_id)["protect"] or not self._mode_allows_protection():
             return None
@@ -577,6 +577,74 @@ class ShabbotManager:
                 state, desired.state):
             await self._apply(entity_id, desired.state, desired.attrs, "override ended")
 
+    # ------------------------------------------------------------ test mode
+
+    @property
+    def simulating(self) -> bool:
+        return self.simulation is not None
+
+    @callback
+    def start_simulation(self) -> None:
+        """Pause the live engine for a manual step-through. Not allowed during Shabbat/Yom Tov."""
+        if block := self.current_block():
+            raise ValueError(f"Test mode can't run during {block.title}")
+        if not self.simulating:
+            for entity_id in list(self._pending_revert):
+                self._cancel_revert(entity_id)
+            self.log("simulation", "Test mode started: protection and scheduled changes are paused")
+        self.simulation = {"started": self.now().isoformat()}
+        self._touch_simulation()
+        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+
+    @callback
+    def _touch_simulation(self) -> None:
+        """Keep the session alive; it ends by itself after SIMULATION_IDLE of no test activity."""
+        if self._simulation_timer:
+            self._simulation_timer()
+        expires = self.now() + timedelta(minutes=SIMULATION_IDLE_MINUTES)
+        self.simulation = {**(self.simulation or {}), "expires": expires.isoformat()}
+        self._simulation_timer = async_track_point_in_time(self.hass, self._simulation_expired, expires)
+
+    @callback
+    def _simulation_expired(self, _now: datetime) -> None:
+        self._simulation_timer = None
+        self.stop_simulation("no activity for 30 min")
+
+    async def async_simulate_apply(self, commands: list[dict[str, Any]]) -> None:
+        if not self.simulating:
+            raise ValueError("Test mode isn't running")
+        self._touch_simulation()
+        for c in commands:
+            if (state := self.hass.states.get(c["entity_id"])) and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                self._simulation_before.setdefault(c["entity_id"], "on" if is_on(state) else "off")
+            await self._apply(c["entity_id"], c["state"], c.get("attrs") or {}, c.get("reason") or "test mode",
+                              kind="simulation", force=True)
+
+    @callback
+    def stop_simulation(self, reason: str = "finished") -> None:
+        """End test mode and put every device back to what the real schedule wants now."""
+        if not self.simulating:
+            return
+        self.simulation = None
+        if self._simulation_timer:
+            self._simulation_timer()
+            self._simulation_timer = None
+        before, self._simulation_before = self._simulation_before, {}
+        self.log("simulation", f"Test mode ended ({reason}); restoring devices")
+        self.hass.async_create_task(self._restore_after_simulation(before))
+        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+
+    async def _restore_after_simulation(self, before: dict[str, str]) -> None:
+        """Devices the test touched go to the schedule's state now, or else back to how they were before."""
+        now = self.now()
+        for entity_id, previous in before.items():
+            desired = self.timeline.desired_at(entity_id, now)
+            want, attrs = (desired.state, desired.attrs) if desired else (previous, {})
+            state = self.hass.states.get(entity_id)
+            if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN) and not matches(state, want):
+                await self._apply(entity_id, want, attrs, "restored after the test", kind="simulation", force=True)
+        await self.async_reconcile("test mode ended")
+
     # ------------------------------------------------------------ activity / notify / status
 
     @callback
@@ -621,6 +689,7 @@ class ShabbotManager:
                       "end": block.end.isoformat()} if block else None,
             "dry_run": bool(self.settings.get("dry_run")),
             "protection": bool(self.settings.get("protection")),
+            "simulation": self.simulation,
             "next_boundary": self._next_boundary.isoformat() if self._next_boundary else None,
             "location": {"latitude": self.location.latitude, "longitude": self.location.longitude,
                          "time_zone": self.location.time_zone, "elevation": self.location.elevation_m},

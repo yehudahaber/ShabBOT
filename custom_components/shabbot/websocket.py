@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.components import websocket_api
@@ -439,6 +439,78 @@ async def ws_routines_reorder(hass, connection, msg) -> None:
     connection.send_result(msg["id"], order)
 
 
+# ---------------------------------------------------------------- test mode
+
+
+def _local_dt(m: ShabbotManager, value: str) -> datetime:
+    """A datetime from the panel; times without a zone are read in ShabBOT's time zone."""
+    try:
+        t = datetime.fromisoformat(value)
+    except ValueError as err:
+        raise vol.Invalid(f"Not a date and time: {value}") from err
+    return t.replace(tzinfo=m.location.tzinfo) if t.tzinfo is None else t.astimezone(m.location.tzinfo)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "shabbot/simulate/steps", vol.Required("start"): str,
+                                  vol.Required("end"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+@_ready
+async def ws_simulate_steps(hass, connection, msg) -> None:
+    """Every scheduled device change between two times, grouped by time (read-only preview)."""
+    m = _mgr(hass)
+    start, end = _local_dt(m, msg["start"]), _local_dt(m, msg["end"])
+    if end <= start:
+        raise vol.Invalid("The end must be after the start")
+    if end - start > timedelta(days=14):
+        raise vol.Invalid("Test at most 14 days at a time")
+    _, instances = m.plan(start.date() - timedelta(days=1), end.date() + timedelta(days=1))
+    connection.send_result(msg["id"], planner.simulation_steps(planner.Timeline(instances), start, end))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "shabbot/simulate/start"})
+@websocket_api.require_admin
+@websocket_api.async_response
+@_ready
+async def ws_simulate_start(hass, connection, msg) -> None:
+    try:
+        _mgr(hass).start_simulation()
+    except ValueError as err:
+        raise vol.Invalid(str(err)) from err
+    connection.send_result(msg["id"])
+
+
+SIM_COMMAND = vol.Schema({
+    vol.Required("entity_id"): str,
+    vol.Required("state"): vol.In(STATES),
+    vol.Optional("attrs"): dict,
+    vol.Optional("reason"): str,
+}, extra=vol.REMOVE_EXTRA)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "shabbot/simulate/apply",
+                                  vol.Required("commands"): [SIM_COMMAND]})
+@websocket_api.require_admin
+@websocket_api.async_response
+@_ready
+async def ws_simulate_apply(hass, connection, msg) -> None:
+    """Switch devices for real (even in dry run) while test mode is running."""
+    try:
+        await _mgr(hass).async_simulate_apply(msg["commands"])
+    except ValueError as err:
+        raise vol.Invalid(str(err)) from err
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({vol.Required("type"): "shabbot/simulate/stop"})
+@websocket_api.require_admin
+@websocket_api.async_response
+@_ready
+async def ws_simulate_stop(hass, connection, msg) -> None:
+    _mgr(hass).stop_simulation()
+    connection.send_result(msg["id"])
+
+
 @websocket_api.websocket_command({vol.Required("type"): "shabbot/rules/save", vol.Required("rules"): list})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -689,8 +761,10 @@ async def ws_learn(hass, connection, msg) -> None:
 def async_setup_websocket(hass: HomeAssistant) -> None:
     for handler in (
         ws_config, ws_plan, ws_timeline, ws_preview, ws_status, ws_activity, ws_subscribe, ws_export, ws_routine_check,
-        ws_routine_save, ws_routine_delete, ws_routines_reorder, ws_rules_save, ws_modes_save, ws_device_save,
-        ws_device_delete, ws_zwave_preset, ws_settings_save, ws_announce_test, ws_announce_upcoming,
-        ws_assignment_set, ws_override_start, ws_override_end, ws_resume, ws_import, ws_learn,
+        ws_routine_save, ws_routine_delete, ws_routines_reorder, ws_simulate_steps, ws_simulate_start,
+        ws_simulate_apply, ws_simulate_stop, ws_rules_save, ws_modes_save, ws_device_save, ws_device_delete,
+        ws_zwave_preset, ws_settings_save, ws_announce_test, ws_announce_upcoming,
+        ws_assignment_set, ws_override_start, ws_override_end, ws_resume,
+        ws_import, ws_learn,
     ):
         websocket_api.async_register_command(hass, handler)

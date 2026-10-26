@@ -71,12 +71,54 @@ const EXPR_ALIASES: Record<string, string> = {
   start: "slot_start", end: "slot_end", "12am": "midnight",
 };
 
-/** Plain-language reading of a time expression, e.g. "sunset+18m" → "Sunset + 18m". Null for clock times etc. */
+/** "+1h30m-5min" → "+ 1 h 30 min − 5 min". */
+const describeOffset = (offset: string) =>
+  offset.replace(/\s+/g, "")
+    .replace(/(\d+)(h(?:rs?|ours?)?|m(?:ins?|inutes?)?)/g, (_, n: string, u: string) => `${n} ${u.startsWith("h") ? "h" : "min"}`)
+    .replace(/([+-])/g, (sign) => ` ${sign === "-" ? "−" : "+"} `)
+    .trim();
+
+/** Plain-language reading of a time expression, e.g. "sunset+18m" → "Sunset + 18 min". Null for clock times etc. */
 export function describeExpr(expr: string): string | null {
-  const m = expr.trim().toLowerCase().match(/^([a-z_]+)\s*(.*)$/);
+  const text = expr.trim().toLowerCase();
+  const fn = text.match(/^(min|max)\s*\((.*)\)$/);
+  if (fn) {
+    const args = splitArgs(fn[2]).map((a) => describeExpr(a) ?? a.trim());
+    return `${fn[1] === "max" ? "Later" : "Earlier"} of ${args.join(" and ")}`;
+  }
+  const m = text.match(/^([a-z_]+)\s*(.*)$/);
   if (!m) return null;
   const label = ANCHOR_LABEL[EXPR_ALIASES[m[1]] ?? m[1]];
   if (!label) return null;
-  const offset = m[2].replace(/\s+/g, "").replace(/([+-])/g, " $1 ").trim();
-  return offset ? `${label} ${offset}` : label;
+  return m[2].trim() ? `${label} ${describeOffset(m[2])}` : label;
+}
+
+/** Split min()/max() arguments on top-level commas. */
+function splitArgs(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of text) {
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    cur += ch;
+  }
+  return [...out, cur];
+}
+
+/** "10/23/26 @ 5:44 PM" in the house's time zone. */
+export const atTime = (iso: string) =>
+  `${fmt({ month: "numeric", day: "numeric", year: "2-digit" })(iso)} @ ${time(iso)}`;
+
+/** An ISO time as a `datetime-local` input value ("2026-10-23T17:00") in the house's time zone. */
+export function localInput(iso: string | Date): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(iso)).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }

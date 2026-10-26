@@ -273,6 +273,8 @@ export interface Status {
   block: { id: string; title: string; start: string; end: string } | null;
   dry_run: boolean;
   protection: boolean;
+  /** Set while test mode runs (the live engine is paused). */
+  simulation: { started: string; expires: string } | null;
   next_boundary: string | null;
   location: Meta["location"];
   entities: EntityStatus[];
@@ -329,4 +331,22 @@ export interface RowCheck {
   after_end: number;
   before_start_example: { key: string; title: string; start: string; end: string } | null;
   after_end_example: { key: string; title: string; start: string; end: string } | null;
+}
+
+/** One device change in test mode, and the row time that caused it. */
+export interface SimCommand {
+  entity_id: string;
+  state: "on" | "off";
+  attrs: { brightness?: number; temperature?: number };
+  routine_name: string;
+  instance_key: string;
+  action_id: string;
+  cause: "start" | "end";
+  expr: string;
+}
+
+/** All device changes scheduled for one moment. */
+export interface SimStep {
+  at: string;
+  commands: SimCommand[];
 }

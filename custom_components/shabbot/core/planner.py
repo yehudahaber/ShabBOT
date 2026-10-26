@@ -219,10 +219,12 @@ class PlannedAction:
     next_day: bool = False  # end was read as the next day's time (crosses midnight)
     occurrence_key: str | None = None  # for baseline rows repeated every night/day: which slot
     occurrence_title: str | None = None
+    start_expr: str = ""  # the row's time expressions, e.g. "candle_lighting-20m"
+    end_expr: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "next_day": self.next_day,
+            "next_day": self.next_day, "start_expr": self.start_expr, "end_expr": self.end_expr,
             "occurrence_key": self.occurrence_key, "occurrence_title": self.occurrence_title,
             "action_id": self.action_id, "entity_id": self.entity_id, "state": self.state, "attrs": self.attrs,
             "start": self.start.isoformat() if self.start else None,
@@ -297,6 +299,7 @@ def plan_instance(target: Target, config: dict[str, Any], tz) -> Instance:
                 disabled=action["id"] in disabled,
                 occurrence_key=occ.key if repeated else None,
                 occurrence_title=occ.title if repeated else None,
+                start_expr=action.get("start", ""), end_expr=action.get("end", ""),
             )
             try:
                 pa.start, pa.end, pa.next_day = evaluate_window(action, occ, tz)
@@ -398,10 +401,13 @@ class Interval:
     instance_key: str
     routine_name: str
     action_id: str
+    start_expr: str = ""
+    end_expr: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "entity_id": self.entity_id, "start": self.start.isoformat(), "end": self.end.isoformat(),
+            "start_expr": self.start_expr, "end_expr": self.end_expr,
             "state": self.state, "attrs": self.attrs, "end_state": self.end_state,
             "instance_key": self.instance_key, "routine_name": self.routine_name, "action_id": self.action_id,
         }
@@ -422,6 +428,7 @@ class Timeline:
                     entity_id=a.entity_id, start=a.start, end=a.end, state=a.state, attrs=a.attrs,
                     end_state=a.end_state, priority=PRIORITY[inst.target.part], instance_key=inst.target.key,
                     routine_name=inst.routine["name"], action_id=a.action_id,
+                    start_expr=a.start_expr, end_expr=a.end_expr,
                 ))
         self._bounds: dict[str, list[datetime]] = {}
         for entity_id, ivs in self.intervals.items():
@@ -459,3 +466,64 @@ class Timeline:
         if not ending:
             return None
         return max(ending, key=lambda iv: (iv.priority, iv.start))
+
+
+# ---------------------------------------------------------------- boundaries / test mode
+
+
+@dataclass(slots=True)
+class BoundaryCommand:
+    """What the executor does to one device at one boundary, and which row's time caused it."""
+
+    entity_id: str
+    state: str
+    attrs: dict[str, Any]
+    routine_name: str
+    instance_key: str
+    action_id: str
+    cause: str  # "start": a row begins at this time; "end": a row ends (its end_state, or what it uncovers)
+    expr: str  # the expression that produced this time, e.g. "candle_lighting-20m"
+    reason: str  # for the activity log
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entity_id": self.entity_id, "state": self.state, "attrs": self.attrs,
+            "routine_name": self.routine_name, "instance_key": self.instance_key, "action_id": self.action_id,
+            "cause": self.cause, "expr": self.expr,
+        }
+
+
+def boundary_command(timeline: Timeline, entity_id: str, t: datetime) -> BoundaryCommand | None:
+    """The command for `entity_id` at boundary `t`: the state now in effect, or the end state of what just ended."""
+    desired = timeline.desired_at(entity_id, t)
+    ending = timeline.ending_at(entity_id, t)
+    if desired is not None:
+        if desired.start == t or ending is None:
+            cause, src = "start", desired
+        else:  # e.g. a meal row ends and the baseline row underneath takes over again
+            cause, src = "end", ending
+        return BoundaryCommand(
+            entity_id=entity_id, state=desired.state, attrs=desired.attrs, routine_name=desired.routine_name,
+            instance_key=src.instance_key, action_id=src.action_id, cause=cause,
+            expr=src.start_expr if cause == "start" else src.end_expr, reason=desired.routine_name,
+        )
+    if ending and ending.end_state in ("on", "off"):
+        return BoundaryCommand(
+            entity_id=entity_id, state=ending.end_state, attrs={}, routine_name=ending.routine_name,
+            instance_key=ending.instance_key, action_id=ending.action_id, cause="end", expr=ending.end_expr,
+            reason=f"End of {ending.routine_name}",
+        )
+    return None
+
+
+def simulation_steps(timeline: Timeline, start: datetime, end: datetime) -> list[dict[str, Any]]:
+    """Every scheduled device change from `start` to `end` (inclusive), grouped by time, for test mode."""
+    steps: list[dict[str, Any]] = []
+    t = timeline.next_boundary(start - timedelta(microseconds=1))
+    while t is not None and t <= end:
+        commands = [c for e in sorted(timeline.entities_with_boundary(t))
+                    if (c := boundary_command(timeline, e, t)) is not None]
+        if commands:
+            steps.append({"at": t.isoformat(), "commands": [c.to_dict() for c in commands]})
+        t = timeline.next_boundary(t)
+    return steps

@@ -289,3 +289,42 @@ def test_one_row_can_control_several_devices() -> None:
     assert len({(a.start, a.end) for a in actions}) == 1
     # Rows saved before multi-device support still work.
     assert planner.action_entities({"entity_id": "light.x"}) == ["light.x"]
+
+
+# ---------------------------------------------------------------- test mode
+
+
+def test_simulation_steps_list_each_change_with_its_cause() -> None:
+    _, instances = planner.plan_range(date(2026, 10, 10), date(2026, 10, 10), BROOKLYN, MINHAG, CONFIG)
+    tl = planner.Timeline(instances)
+    night = _slot(FRI_NIGHT, "night")
+    sunset, candles = night.anchors["sunset"], night.anchors["candle_lighting"]
+    steps = planner.simulation_steps(tl, candles, datetime(2026, 10, 10, 0, 1, tzinfo=TZ))
+    flat = [(datetime.fromisoformat(s["at"]), c["entity_id"], c["state"], c["cause"], c["expr"])
+            for s in steps for c in s["commands"]]
+    assert flat == [
+        (candles, "light.bedroom", "off", "start", "block_start"),
+        (candles, "light.chandelier", "off", "start", "block_start"),
+        (sunset, "light.living_room", "on", "start", "sunset"),
+        (sunset, "switch.hotplate", "on", "start", "sunset"),
+        (sunset + timedelta(minutes=18), "light.chandelier", "on", "start", "sunset+18m"),
+        (sunset + timedelta(hours=2), "switch.hotplate", "off", "end", "sunset+2h"),  # one-shot end state
+        # The meal row ends and the baseline underneath takes over again.
+        (datetime(2026, 10, 9, 23, 45, tzinfo=TZ), "light.chandelier", "off", "end", "11:45pm"),
+        (datetime(2026, 10, 10, 0, 0, tzinfo=TZ), "light.living_room", "off", "end", "midnight"),
+    ]
+    assert [len(s["commands"]) for s in steps][:2] == [2, 2]  # simultaneous changes are one step
+    # The range is inclusive at both ends and nothing outside it is listed.
+    assert planner.simulation_steps(tl, sunset, sunset)[0]["at"] == sunset.isoformat()
+    assert len(planner.simulation_steps(tl, sunset, sunset)) == 1
+
+
+def test_simulation_skips_leave_as_is_endings() -> None:
+    config = {**CONFIG, "routines": {**CONFIG["routines"], "std_night": {
+        **CONFIG["routines"]["std_night"],
+        "actions": [{**_action("a2", "switch.hotplate", "sunset", "sunset+2h"), "end_state": "leave"}]}}}
+    _, instances = planner.plan_range(date(2026, 10, 10), date(2026, 10, 10), BROOKLYN, MINHAG, config)
+    sunset = _slot(FRI_NIGHT, "night").anchors["sunset"]
+    steps = planner.simulation_steps(planner.Timeline(instances), sunset, sunset + timedelta(hours=3))
+    assert [(c["entity_id"], c["state"]) for s in steps for c in s["commands"]
+            if c["entity_id"] == "switch.hotplate"] == [("switch.hotplate", "on")]

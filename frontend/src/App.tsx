@@ -11,6 +11,7 @@ import { ModesPage } from "./pages/ModesPage";
 import { DevicesPage } from "./pages/DevicesPage";
 import { ActivityPage } from "./pages/ActivityPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SimulatePage } from "./pages/SimulatePage";
 
 const TABS = [
   { id: "calendar", label: "Calendar", el: CalendarPage },
@@ -19,6 +20,7 @@ const TABS = [
   { id: "modes", label: "Summer & vacation", el: ModesPage },
   { id: "devices", label: "Devices", el: DevicesPage },
   { id: "activity", label: "Activity", el: ActivityPage },
+  { id: "test", label: "Test", el: SimulatePage },
   { id: "settings", label: "Settings", el: SettingsPage },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -58,6 +60,7 @@ export function App({ narrow }: { narrow: boolean }) {
             {s?.issur_melacha && s.block ? (
               <span className="sb-badge sb-badge-candle">{s.block.title} until {time(s.block.end)}</span>
             ) : null}
+            {s?.simulation && <span className="sb-badge sb-badge-warn">Test mode · protection paused</span>}
             {s && <span className={`sb-badge ${s.protection ? "sb-badge-ok" : ""}`}><Icon name="shield" size={12} /> Protection {s.protection ? "on" : "off"}</span>}
             {overrides > 0 && <span className="sb-badge sb-badge-warn">{overrides} overridden</span>}
             {outOfSync > 0 && <span className="sb-badge sb-badge-danger">{outOfSync} out of place</span>}

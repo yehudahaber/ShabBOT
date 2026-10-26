@@ -154,6 +154,17 @@ ShabBOT can answer "what day is it?" for a dashboard, a voice assistant, or a ph
 
 `shabbot.get_day_info` returns the same facts as JSON, plus `summary`, a short factual sentence. `text` is that same sentence. `spoken` is it after the pronunciation lexicon, which is what to send to TTS. The sensors stay on the display spelling. Leave `date` empty for right now. Pass a civil `date` (`2026-10-20`) for that day's daytime, with no shkia rollover. The kids' script is a separate action, `shabbot.get_daily_briefing`, and only when the voice module is on.
 
+## Test mode
+
+The **Test** tab rehearses the schedule on your real devices. Pick a range (it defaults to the next Shabbat/Yom Tov, an hour either side) and ShabBOT steps through every scheduled change in it, grouped by time:
+
+1. It lists what's about to change, e.g. `Simulating 10/23/26 @ 5:44 PM (Candle lighting − 20 min) events: Master Bedroom: OFF`. Times that come from zmanim show where they came from. You can first flip those devices to the opposite state, so you can see the change happen.
+2. **Begin test** sends the changes (even in dry run). Then mark the event **Pass** or **Fail**; on Fail, mark each device.
+3. **Skip** moves on without testing (its devices are marked skipped). **Back** returns to an earlier event: its results are kept unless you press **Re-test**.
+4. At the end, or if you **Cancel test** midway, a summary lists every event done so far with each device's Pass/Fail/Skipped; **Copy results** copies it as text.
+
+While a test runs, protection and the real schedule are paused. When it ends (or after 30 idle minutes), every device it touched goes back to what the schedule wants now, or else to how it was before. Tests can't start during Shabbat/Yom Tov.
+
 ## Entities & actions
 
 | Entity | |
