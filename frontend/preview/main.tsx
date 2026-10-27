@@ -14,6 +14,7 @@ const narrow = params.has("narrow");
 
 const TEMPLATES = {
   candle: "{About} until candle lighting, {time}.",
+  candle_now: "It's candle lighting time.",
   shkia: "{About} until shkia.",
   shkia_final: "Shkia is in {about}. Time to stop all melacha.",
   motzei: "It's motzei Shabbat. Havdalah is {about} after shkia, and melacha is permitted.",
@@ -22,7 +23,7 @@ const TEMPLATES = {
 };
 
 const GROUPS: AnnounceGroups = {
-  candle: true, shkia: true, shkia_final: true, motzei: true, yt_candle: true,
+  candle: true, candle_now: true, shkia: true, shkia_final: true, motzei: true, yt_candle: true,
 };
 
 const saved: Settings = {
@@ -81,6 +82,7 @@ const UPCOMING: AnnounceUpcoming["items"] = [
   { at: "2026-10-09T17:36:00-04:00", kind: "candle", minutes: 30, message: "About half an hour until candle lighting, at 6:08." },
   { at: "2026-10-09T17:51:00-04:00", kind: "candle", minutes: 15, message: "About fifteen minutes until candle lighting, at 6:08." },
   { at: "2026-10-09T18:01:00-04:00", kind: "candle", minutes: 5, message: "About five minutes until candle lighting, at 6:08." },
+  { at: "2026-10-09T18:06:00-04:00", kind: "candle_now", minutes: 0, message: "It's candle lighting time." },
   { at: "2026-10-09T18:09:00-04:00", kind: "shkia", minutes: 15, message: "About fifteen minutes until shkia." },
   { at: "2026-10-09T18:19:00-04:00", kind: "shkia", minutes: 5, message: "About five minutes until shkia." },
   { at: "2026-10-09T18:23:00-04:00", kind: "shkia_final", minutes: 1, message: "Shkia is in about a minute. Time to stop all melacha." },
@@ -95,6 +97,7 @@ function previewUpcoming(settings: Settings): AnnounceUpcoming {
   const groups = settings.announce_groups;
   const items = UPCOMING.filter((item) => {
     if (item.kind === "candle") return groups.candle && settings.announce_candle_marks.includes(item.minutes);
+    if (item.kind === "candle_now") return groups.candle_now;
     if (item.kind === "shkia") return groups.shkia && settings.announce_shkia_marks.includes(item.minutes);
     if (item.kind === "shkia_final") return groups.shkia_final;
     if (item.kind === "motzei") return groups.motzei;

@@ -681,3 +681,22 @@ async def test_simulation_restores_and_expires(hass: HomeAssistant, manager: Sha
     await _advance(hass, freezer, timedelta(minutes=31))
     assert not manager.simulating
     assert _state(hass, "hotplate") == "off"  # no schedule before Shabbat: back to how it was
+
+
+async def test_announcement_is_skipped_while_test_mode_runs(
+        hass: HomeAssistant, manager: ShabbotManager, freezer: FrozenDateTimeFactory) -> None:
+    block, _sunset = _block_times(manager)
+    manager.settings.update({
+        "voice_enabled": True,
+        "announce_enabled": True,
+        "announce_players": ["media_player.kitchen"],
+        "announce_tts_entity": "tts.google_en_com",
+        "dry_run": True,
+    })
+    manager.config_changed(reconcile=False)
+    await hass.async_block_till_done()
+    await _advance(hass, freezer, block.start - timedelta(minutes=61))
+    manager.start_simulation()
+    await _advance(hass, freezer, block.start - timedelta(minutes=59))
+    assert not any(e["kind"] == "announce" for e in manager.store.activity)
+    assert any(e["kind"] == "simulation" and "skipped announcement" in e["message"] for e in manager.store.activity)

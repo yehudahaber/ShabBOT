@@ -135,6 +135,7 @@ export interface Settings {
 
 export interface AnnounceGroups {
   candle: boolean;
+  candle_now: boolean;
   shkia: boolean;
   shkia_final: boolean;
   motzei: boolean;
@@ -148,6 +149,7 @@ export interface AnnounceUpcoming {
 
 export interface AnnounceTemplates {
   candle: string;
+  candle_now: string;
   shkia: string;
   shkia_final: string;
   motzei: string;

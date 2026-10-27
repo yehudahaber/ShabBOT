@@ -13,7 +13,7 @@ const WORDS: Record<number, string> = {
 };
 
 const DEFAULT_GROUPS: AnnounceGroups = {
-  candle: true, shkia: true, shkia_final: true, motzei: true, yt_candle: true,
+  candle: true, candle_now: true, shkia: true, shkia_final: true, motzei: true, yt_candle: true,
 };
 
 const ABOUT: Record<number, string> = {
@@ -217,6 +217,11 @@ export function AnnouncementsCard({ draft, set, dirty, dryRun, onNotice, startAd
             phrase={marksPhrase(draft.announce_candle_marks, "candle lighting")} />
           <Wording value={templates.candle} fallback={defaultTemplates.candle} minutes={draft.announce_candle_marks[0] ?? 20}
             onChange={(v) => setTemplate("candle", v)} />
+        </Group>
+        <Group title="At candle lighting" on={groups.candle_now} onToggle={(v) => setGroup("candle_now", v)}>
+          <p className="sb-hint">Spoken once at candle lighting itself, on erev Shabbat and erev Yom Tov.</p>
+          <Wording value={templates.candle_now} fallback={defaultTemplates.candle_now} minutes={0}
+            onChange={(v) => setTemplate("candle_now", v)} />
         </Group>
         <Group title="Shkia countdown" on={groups.shkia} onToggle={(v) => setGroup("shkia", v)}>
           <MinuteChips value={draft.announce_shkia_marks} onChange={(v) => set("announce_shkia_marks", v)}
