@@ -26,7 +26,11 @@ a later Yom Tov night starts at the previous day's havdalah, after tzeit):
   day's end: Shabbat havdalah if that day was Shabbat, otherwise the Yom Tov
   end offset.
 
-Each group (candle countdown, shkia countdown, the final warning, motzaei,
+Candle lighting itself also speaks once ("It's candle lighting time") at the
+candle-lighting moment, on every before-shkia night (erev Shabbat and erev
+Yom Tov alike).
+
+Each group (candle countdown, candle lighting now, shkia countdown, the final warning, motzaei,
 and next-meal preparation) can be switched off on its own. A missing group
 flag stays on, so settings saved before the switches existed keep speaking.
 
@@ -72,13 +76,15 @@ SHKIA_FINAL = "shkia_final"
 MOTZEI = "motzei"
 YT_CANDLE = "yt_candle"
 YT_CANDLE_NOW = "yt_candle_now"
+CANDLE_NOW = "candle_now"
 
-TEMPLATE_KINDS = (CANDLE, SHKIA, SHKIA_FINAL, MOTZEI, YT_CANDLE, YT_CANDLE_NOW)
+TEMPLATE_KINDS = (CANDLE, CANDLE_NOW, SHKIA, SHKIA_FINAL, MOTZEI, YT_CANDLE, YT_CANDLE_NOW)
 MARK_MAX = 12 * 60
 LEAD_MAX = 300
 
 DEFAULT_TEMPLATES: dict[str, str] = {
     "candle": "{About} until candle lighting, {time}.",
+    "candle_now": "It's candle lighting time.",
     "shkia": "{About} until shkia.",
     "shkia_final": "Shkia is in {about}. Time to stop all melacha.",
     "motzei": "It's motzei {occasion}. Havdalah is {about} after shkia, and melacha is permitted.",
@@ -103,6 +109,7 @@ _RETIRED_TEMPLATES: dict[str, frozenset[str]] = {
 }
 _ZMAN_NAME = {
     CANDLE: "candle lighting",
+    CANDLE_NOW: "candle lighting",
     SHKIA: "shkia",
     SHKIA_FINAL: "shkia",
     MOTZEI: "havdalah",
@@ -113,8 +120,9 @@ DEFAULT_CANDLE_MARKS = (60, 30, 15, 5)
 DEFAULT_SHKIA_MARKS = (60, 30, 15, 5)
 DEFAULT_YT_MARKS = (60, 30, 15, 5)
 
-# Panel switches. yt_candle also covers the sentence spoken when preparation may begin.
-GROUP_KEYS = (CANDLE, SHKIA, SHKIA_FINAL, MOTZEI, YT_CANDLE)
+# Panel switches. candle_now is the sentence spoken at candle lighting itself (erev Shabbat and erev
+# Yom Tov alike). yt_candle also covers the sentence spoken when preparation may begin.
+GROUP_KEYS = (CANDLE, CANDLE_NOW, SHKIA, SHKIA_FINAL, MOTZEI, YT_CANDLE)
 
 # These finish at nominal_at once the rendered clip length is known.
 END_ON_TIME_KINDS = frozenset({SHKIA_FINAL})
@@ -572,6 +580,8 @@ def plan_announcements(
             if groups.get(CANDLE, True):
                 for minutes in options.candle_marks:
                     add(CANDLE, shift(candle, -minutes * 60), minutes, slot, block, occasion, candle)
+            if groups.get(CANDLE_NOW, True):
+                add(CANDLE_NOW, candle, 0, slot, block, occasion, candle)
             final_on = groups.get(SHKIA_FINAL, True)
             final_at = shift(sunset, -options.shkia_final_min * 60)
             if groups.get(SHKIA, True):

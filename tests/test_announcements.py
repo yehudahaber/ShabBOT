@@ -400,10 +400,43 @@ def test_retired_candle_wording_becomes_the_preparation_sentence() -> None:
     assert upgraded.templates["candle"] == announcements.DEFAULT_TEMPLATES["candle"]
 
 
+def test_candle_lighting_now_speaks_at_the_candle_time() -> None:
+    from custom_components.shabbot.voice.pronounce import apply_pronunciation
+
+    block, events = _plan(date(2026, 10, 10))
+    now = _by(events, "candle_now", block.days[0])
+    assert now.nominal_at == block.start
+    assert now.minutes == 0
+    assert now.message == "It's candle lighting time."
+    assert apply_pronunciation(now.message, announcements.DEFAULT_PRONUNCIATIONS)  # respelling leaves it speakable
+    # It follows the countdown and precedes the shkia marks.
+    order = [e.kind for e in events if e.day == block.days[0]]
+    assert order.index("candle_now") > max(i for i, k in enumerate(order) if k == "candle")
+    assert all(e.nominal_at > now.nominal_at for e in events if e.kind in ("shkia", "shkia_final"))
+    # Defaults on; its own switch and wording.
+    _, off = _plan(date(2026, 10, 10), announce_groups={"candle_now": False})
+    assert not any(e.kind == "candle_now" for e in off) and any(e.kind == "candle" for e in off)
+    _, blank = _plan(date(2026, 10, 10), announce_templates={"candle_now": " "})
+    assert not any(e.kind == "candle_now" for e in blank)
+    _, only = _plan(date(2026, 10, 10), announce_groups={"candle": False})
+    assert any(e.kind == "candle_now" for e in only)
+
+
+def test_candle_lighting_now_on_yom_tov_eve_but_not_on_a_later_night() -> None:
+    """Pesach 2027: erev Yom Tov and the Friday night into Shabbat light candles; the later Yom Tov night does not."""
+    block, events = _plan(date(2027, 4, 22))
+    nights = [s for s in block.slots if s.part is jcal.Part.NIGHT]
+    spoken = [e for e in events if e.kind == "candle_now"]
+    assert [e.nominal_at for e in spoken] == [nights[0].start, nights[2].start]
+    assert not any(e.day == date(2027, 4, 23) and e.kind == "candle_now" for e in events)
+    assert len({e.id for e in events}) == len(events)
+
+
 def test_missing_group_flags_stay_on() -> None:
     options = announcements.options_from_settings({})
     assert options.groups == {
-        "candle": True, "shkia": True, "shkia_final": True, "motzei": True, "yt_candle": True,
+        "candle": True, "candle_now": True, "shkia": True, "shkia_final": True, "motzei": True,
+        "yt_candle": True,
     }
     assert options.yt_marks == (60, 30, 15, 5)
 
@@ -453,6 +486,7 @@ def test_settings_schema_accepts_group_toggles_and_sorts_marks() -> None:
     })
     assert out["announce_groups"]["candle"] is False
     assert out["announce_groups"]["shkia"] is True
+    assert SETTINGS_SCHEMA({"announce_groups": {"candle_now": False}})["announce_groups"]["candle_now"] is False
     assert out["announce_yt_marks"] == [60, 5]
     with pytest.raises(vol.Invalid):
         SETTINGS_SCHEMA({"announce_groups": {"nope": True}})
@@ -476,3 +510,25 @@ def test_announce_style_options_are_lenient() -> None:
     assert (broken.repeat, broken.gap_ms) == (1, 400)
     with pytest.raises(ValueError):
         announcements.coerce_repeat("three")
+
+
+def test_real_marks_are_skipped_while_test_mode_runs() -> None:
+    from types import SimpleNamespace
+
+    from custom_components.shabbot.voice.announcer import Announcer
+
+    block, events = _plan(date(2026, 10, 10))
+    event = _by(events, "candle_now", block.days[0])
+    logged: list[tuple] = []
+    tasks: list = []
+    manager = SimpleNamespace(
+        simulating=True,
+        log=lambda *args, **kwargs: logged.append(args),
+        hass=SimpleNamespace(async_create_task=tasks.append),
+    )
+    call = announcements.ScheduledCall(announcement=event, fire_at=event.nominal_at,
+                                       players=("media_player.kitchen",), lead_seconds=0)
+    announcer = Announcer(manager)
+    announcer._on_due(call, None)
+    assert not tasks and not announcer._active
+    assert logged and logged[0][0] == "simulation" and event.message in logged[0][1]

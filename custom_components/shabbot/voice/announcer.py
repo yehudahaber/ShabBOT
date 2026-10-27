@@ -8,6 +8,8 @@ from the known clip length so the sentence ends on its mark.
 An optional soft cue plays first, then the line is spoken once or twice (the
 ``announce_repeat`` setting) with a short gap between plays. One run per mark:
 a mark that is already playing is not started again, and runs never overlap.
+While Test mode runs, real marks that come due are skipped (and logged), so a
+rehearsal is never talked over.
 
 Sonos players are snapshotted before speech and restored afterwards, so a
 previous queue and volume come back. Other players only have their volume put
@@ -152,6 +154,10 @@ class Announcer:
 
     @callback
     def _on_due(self, call: announcements.ScheduledCall, _now: Any) -> None:
+        if self._m.simulating:
+            # Test mode owns the speakers' neighbours; a late countdown is worse than silence, so skip it.
+            self._m.log("simulation", f"Test mode: skipped announcement — {call.announcement.message}")
+            return
         key = ("mark", call.announcement.id, call.players)
         if key in self._active:
             _LOGGER.debug("Announcement %s is already playing, not starting it again", call.announcement.id)
