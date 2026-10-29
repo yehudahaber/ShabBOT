@@ -576,7 +576,11 @@ async def test_announce_style_repeat_cue_and_single_run(
         hass: HomeAssistant, manager: ShabbotManager, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cue, then the line N times; a mark already playing is not started again."""
+    import io
+    import wave
+
     from custom_components.shabbot.voice import announcer as announcer_module
+    from custom_components.shabbot.voice.prerender import ClipLibrary, media_directory
 
     sleeps: list[float] = []
 
@@ -627,6 +631,172 @@ async def test_announce_style_repeat_cue_and_single_run(
     await manager.announcer.async_speak_test("shkia")
     assert len(played) == 1
 
+
+def _register_recorder(hass: HomeAssistant, *services: tuple[str, str]) -> list[tuple[str, str, dict]]:
+    calls: list[tuple[str, str, dict]] = []
+
+    async def _record(call) -> None:
+        calls.append((call.domain, call.service, dict(call.data)))
+
+    for domain, service in services:
+        hass.services.async_register(domain, service, _record)
+    return calls
+
+
+def _store_test_clip(hass: HomeAssistant) -> None:
+    import io
+    import wave
+
+    from custom_components.shabbot.voice.prerender import ClipLibrary, media_directory
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000)
+    ClipLibrary(media_directory(hass)).store("tts.piper", "", "", "shkee-ah", buffer.getvalue())
+
+
+async def test_announce_unmutes_even_without_volume_and_sonos_restore_keeps_mute(
+        hass: HomeAssistant, manager: ShabbotManager, freezer: FrozenDateTimeFactory,
+) -> None:
+    """A muted speaker must still speak. Sonos restore, not a second mute call, puts mute back."""
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "media_player", "sonos", "kitchen-sonos", suggested_object_id="kitchen",
+    )
+    hass.states.async_set(
+        "media_player.kitchen", "idle", {"volume_level": 0.2, "is_volume_muted": True},
+    )
+    calls = _register_recorder(
+        hass,
+        ("sonos", "snapshot"),
+        ("sonos", "restore"),
+        ("media_player", "volume_set"),
+        ("media_player", "volume_mute"),
+        ("media_player", "play_media"),
+    )
+    _store_test_clip(hass)
+
+    manager.settings.update({
+        "voice_enabled": True,
+        "announce_enabled": True,
+        "announce_players": ["media_player.kitchen"],
+        "announce_tts_entity": "tts.piper",
+        "announce_volume": None,
+        "announce_repeat": "once",
+        "announce_cue": False,
+        "dry_run": False,
+    })
+    await manager.announcer.async_speak_test("shkia")
+    await hass.async_block_till_done()
+    assert ("media_player", "volume_set") not in [(d, s) for d, s, _ in calls]
+    mute = [data for domain, service, data in calls if domain == "media_player" and service == "volume_mute"]
+    assert mute == [{"entity_id": ["media_player.kitchen"], "is_volume_muted": False}]
+    prepare = [(domain, service) for domain, service, _ in calls]
+    assert prepare.index(("sonos", "snapshot")) < prepare.index(("media_player", "volume_mute"))
+    assert prepare.index(("media_player", "volume_mute")) < prepare.index(("media_player", "play_media"))
+
+    await _advance(hass, freezer, timedelta(seconds=4))
+    assert [service for _domain, service, _data in calls].count("volume_mute") == 1
+    assert ("sonos", "restore") in [(domain, service) for domain, service, _data in calls]
+    restore = next(data for domain, service, data in calls if domain == "sonos" and service == "restore")
+    assert restore["entity_id"] == ["media_player.kitchen"]
+    assert "is_volume_muted" not in restore
+
+    calls.clear()
+    manager.settings["announce_volume"] = 40
+    await manager.announcer.async_speak_test("shkia")
+    await hass.async_block_till_done()
+    ordered = [(domain, service, data) for domain, service, data in calls]
+    assert ("media_player", "volume_set", {"entity_id": ["media_player.kitchen"], "volume_level": 0.4}) in ordered
+    assert ("media_player", "volume_mute", {"entity_id": ["media_player.kitchen"], "is_volume_muted": False}) in ordered
+    services = [(domain, service) for domain, service, _data in ordered]
+    assert services.index(("media_player", "volume_set")) < services.index(("media_player", "volume_mute"))
+    assert services.index(("media_player", "volume_mute")) < services.index(("media_player", "play_media"))
+
+
+async def test_non_sonos_mute_is_cleared_for_speech_and_restored_only_if_it_was_muted(
+        hass: HomeAssistant, manager: ShabbotManager, freezer: FrozenDateTimeFactory,
+) -> None:
+    """No snapshot service: remember mute per player, unmute for speech, re-mute only the muted one."""
+    hass.states.async_set("media_player.den", "idle", {"volume_level": 0.3, "is_volume_muted": True})
+    hass.states.async_set("media_player.porch", "idle", {"volume_level": 0.5, "is_volume_muted": False})
+    calls = _register_recorder(
+        hass,
+        ("media_player", "volume_set"),
+        ("media_player", "volume_mute"),
+        ("media_player", "play_media"),
+    )
+    _store_test_clip(hass)
+    manager.settings.update({
+        "voice_enabled": True,
+        "announce_enabled": True,
+        "announce_players": ["media_player.den", "media_player.porch"],
+        "announce_tts_entity": "tts.piper",
+        "announce_volume": None,
+        "announce_repeat": "once",
+        "announce_cue": False,
+        "dry_run": False,
+    })
+    await manager.announcer.async_speak_test("shkia")
+    await hass.async_block_till_done()
+    names = [(domain, service) for domain, service, _data in calls]
+    assert ("media_player", "volume_set") not in names  # mute restore does not need a volume
+    assert names.count(("media_player", "volume_mute")) == 1
+    first_mute = next(data for _d, service, data in calls if service == "volume_mute")
+    assert first_mute == {
+        "entity_id": ["media_player.den", "media_player.porch"], "is_volume_muted": False,
+    }
+    assert names.index(("media_player", "volume_mute")) < names.index(("media_player", "play_media"))
+
+    await _advance(hass, freezer, timedelta(seconds=4))
+    mutes = [data for _d, service, data in calls if service == "volume_mute"]
+    assert mutes[1:] == [{"entity_id": "media_player.den", "is_volume_muted": True}]
+    assert ("media_player", "volume_set") not in [(d, s) for d, s, _ in calls]
+
+    # Nobody muted beforehand: nothing to put back.
+    calls.clear()
+    hass.states.async_set("media_player.den", "idle", {"volume_level": 0.3, "is_volume_muted": False})
+    await manager.announcer.async_speak_test("shkia")
+    await hass.async_block_till_done()
+    await _advance(hass, freezer, timedelta(seconds=4))
+    mutes = [data for _d, service, data in calls if service == "volume_mute"]
+    assert mutes == [{"entity_id": ["media_player.den", "media_player.porch"], "is_volume_muted": False}]
+
+
+async def test_test_mode_due_mark_does_not_touch_mute(
+        hass: HomeAssistant, manager: ShabbotManager, freezer: FrozenDateTimeFactory,
+) -> None:
+    """A real mark skipped during Test mode must not unmute (or play) anything."""
+    block, _sunset = _block_times(manager)
+    hass.states.async_set("media_player.kitchen", "idle", {"volume_level": 0.2, "is_volume_muted": True})
+    calls = _register_recorder(
+        hass,
+        ("media_player", "volume_set"),
+        ("media_player", "volume_mute"),
+        ("media_player", "play_media"),
+    )
+    _store_test_clip(hass)
+    manager.settings.update({
+        "voice_enabled": True,
+        "announce_enabled": True,
+        "announce_players": ["media_player.kitchen"],
+        "announce_tts_entity": "tts.piper",
+        "announce_repeat": "once",
+        "announce_cue": False,
+        "dry_run": False,
+    })
+    manager.config_changed(reconcile=False)
+    await hass.async_block_till_done()
+    await _advance(hass, freezer, block.start - timedelta(minutes=61))
+    manager.start_simulation()
+    await _advance(hass, freezer, block.start - timedelta(minutes=59))
+    assert any(e["kind"] == "simulation" and "skipped announcement" in e["message"] for e in manager.store.activity)
+    assert not [c for c in calls if c[1] in ("volume_mute", "volume_set", "play_media")]
 
 
 async def test_simulation_api_switches_devices_even_in_dry_run(hass: HomeAssistant, manager: ShabbotManager,
