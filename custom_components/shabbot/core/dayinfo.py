@@ -27,7 +27,7 @@ even if the map says something else.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from functools import lru_cache
 from typing import Any
 
@@ -168,7 +168,7 @@ def _and_join(parts: list[str]) -> str:
 
 @lru_cache(maxsize=32)
 def _hdate_times(
-    day: date, latitude: float, longitude: float, time_zone: str, altitude: float,
+    day: date, latitude: float, longitude: float, time_zone: tzinfo, altitude: float,
 ) -> tuple[tuple[str, datetime], ...]:
     location = Location("shabbot", latitude, longitude, time_zone, altitude, diaspora=True)
     zmanim = Zmanim(date=day, location=location)
@@ -177,7 +177,7 @@ def _hdate_times(
 
 def _times(day: date, loc: astro.Location, minhag: jcal.Minhag) -> dict[str, datetime]:
     altitude = float(loc.elevation_m) if minhag.use_elevation else 0.0
-    pairs = _hdate_times(day, round(loc.latitude, 6), round(loc.longitude, 6), loc.time_zone, round(altitude, 1))
+    pairs = _hdate_times(day, round(loc.latitude, 6), round(loc.longitude, 6), loc.tzinfo, round(altitude, 1))
     return dict(pairs)
 
 

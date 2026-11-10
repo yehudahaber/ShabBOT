@@ -54,6 +54,19 @@ export function EntityMultiPicker({ value, onChange, domains = CONTROLLABLE, exc
     }
   };
   const unknown = typed.trim() !== "" && !(typed.trim() in options);
+  // Two entities with one name (e.g. a switch and its converted light) look identical; tell them apart.
+  const shared = new Set<string>();
+  const seen = new Set<string>();
+  for (const name of Object.values(options)) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) shared.add(key);
+    seen.add(key);
+  }
+  const label = (id: string) => {
+    const name = options[id];
+    if (!name) return id;
+    return shared.has(name.toLowerCase()) ? `${name} · ${id.split(".")[0]}` : name;
+  };
   return (
     <div className="sb-stack" style={{ gap: 4 }}>
       {value.length > 0 && (
@@ -61,7 +74,7 @@ export function EntityMultiPicker({ value, onChange, domains = CONTROLLABLE, exc
           {value.map((id) => (
             <button key={id} type="button" className={`sb-chip sb-chip-device ${id in options ? "" : "sb-invalid"}`}
               title={`${id} (click to remove)`} onClick={() => onChange(value.filter((x) => x !== id))}>
-              {options[id] ?? id} <span aria-hidden="true">×</span>
+              {label(id)} <span aria-hidden="true">×</span>
             </button>
           ))}
         </div>
@@ -70,7 +83,7 @@ export function EntityMultiPicker({ value, onChange, domains = CONTROLLABLE, exc
         placeholder={value.length ? "Add another device…" : "Choose a device…"} onChange={(e) => add(e.target.value)} />
       <datalist id={listId}>
         {sorted.filter(([id]) => !value.includes(id) && !exclude.includes(id)).map(([id, name]) => (
-          <option key={id} value={id}>{name}</option>
+          <option key={id} value={id}>{label(id) || name}</option>
         ))}
       </datalist>
       {unknown && <small className="sb-preview">Not found in Home Assistant</small>}

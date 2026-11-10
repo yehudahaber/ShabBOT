@@ -1,5 +1,6 @@
 """The optional voice module: wording, the kids' briefing, and core with the module off."""
 
+from zoneinfo import ZoneInfo
 from datetime import datetime
 from pathlib import Path
 
@@ -70,7 +71,7 @@ def test_notes_sentence_and_a_briefing_without_weather_or_notes() -> None:
 
     assert notes_sentence([]) == ""
     assert notes_sentence(["Pack the lunch bag"]) == "A note from home: Pack the lunch bag."
-    brooklyn = astro.Location(40.6501, -73.94958, "America/New_York", 18)
+    brooklyn = astro.Location(40.6501, -73.94958, ZoneInfo("America/New_York"), 18)
     morning = datetime(2026, 10, 20, 8, 0, tzinfo=brooklyn.tzinfo)
     info = build_day_info(morning, brooklyn, jcal.Minhag())
     script = render_briefing(info, template="")

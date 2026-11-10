@@ -1,7 +1,7 @@
 name: Release
 
 # Publishing a GitHub release (tag like v0.2.0) builds the panel and attaches shabbot.zip,
-# which HACS downloads (hacs.json: zip_release).
+# which the Marketplace and HACS download (hacs.json: zip_release).
 on:
   release:
     types: [published]

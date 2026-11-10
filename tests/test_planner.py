@@ -1,12 +1,13 @@
 """Time expressions, rule resolution and the desired-state timeline."""
 
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.shabbot.core import astro, jcal, planner, timeexpr
 
-BROOKLYN = astro.Location(40.6501, -73.94958, "America/New_York", 18)
+BROOKLYN = astro.Location(40.6501, -73.94958, ZoneInfo("America/New_York"), 18)
 TZ = BROOKLYN.tzinfo
 MINHAG = jcal.Minhag()
 
@@ -328,3 +329,68 @@ def test_simulation_skips_leave_as_is_endings() -> None:
     steps = planner.simulation_steps(planner.Timeline(instances), sunset, sunset + timedelta(hours=3))
     assert [(c["entity_id"], c["state"]) for s in steps for c in s["commands"]
             if c["entity_id"] == "switch.hotplate"] == [("switch.hotplate", "on")]
+
+
+# ---------------------------------------------------------------- conflicts
+
+
+def _stairwell_timeline(meal_entity: str, baseline_entity: str, baseline_state: str = "off") -> planner.Timeline:
+    """Friday Nov 6 2026: the meal turns the stairwell on at sunset; the baseline keeps it off."""
+    cfg = {**CONFIG, "routines": {
+        **CONFIG["routines"],
+        "std_night": {"id": "std_night", "name": "Standard Friday night", "part": "night", "actions": [
+            _action("s3", meal_entity, "sunset", "midnight-2H")]},
+        "baseline": {"id": "baseline", "name": "Baseline", "part": "block", "actions": [
+            _action("b9", baseline_entity, "block_start", "block_end", state=baseline_state)]},
+    }}
+    _, instances = planner.plan_range(date(2026, 11, 7), date(2026, 11, 7), BROOKLYN, MINHAG, cfg)
+    return planner.Timeline(instances)
+
+
+LINK = planner.Link("light.entryway_stairwell", "switch.entryway_stairwell", "wrapper")
+
+
+def test_linked_entities_with_opposite_rows_conflict() -> None:
+    tl = _stairwell_timeline("switch.entryway_stairwell", "light.entryway_stairwell")
+    (c,) = planner.find_conflicts(tl, [LINK])
+    assert c.kind == "wrapper" and c.count == 1
+    assert {c.a.action_id, c.b.action_id} == {"s3", "b9"}
+    sunset = _slot(date(2026, 11, 7), "night").anchors["sunset"]
+    assert c.start == sunset and c.end == datetime(2026, 11, 6, 22, 0, tzinfo=TZ)
+    d = c.to_dict()
+    assert {d["a"]["routine_id"], d["b"]["routine_id"]} == {"std_night", "baseline"}
+
+
+def test_linked_entities_with_matching_rows_are_fine() -> None:
+    tl = _stairwell_timeline("switch.entryway_stairwell", "light.entryway_stairwell", baseline_state="on")
+    assert planner.find_conflicts(tl, [LINK]) == []
+
+
+def test_meal_over_baseline_on_one_entity_is_layering() -> None:
+    tl = _stairwell_timeline("light.entryway_stairwell", "light.entryway_stairwell")
+    assert planner.find_conflicts(tl, [LINK]) == []
+    _, instances = planner.plan_range(date(2026, 10, 10), date(2026, 10, 10), BROOKLYN, MINHAG, CONFIG)
+    assert planner.find_conflicts(planner.Timeline(instances), []) == []
+
+
+def test_same_entity_rows_that_tie_conflict() -> None:
+    cfg = {**CONFIG, "routines": {**CONFIG["routines"], "std_night": {
+        "id": "std_night", "name": "Standard Friday night", "part": "night", "actions": [
+            _action("x1", "light.hall", "sunset", "11pm"),
+            _action("x2", "light.hall", "sunset", "10pm", state="off"),
+            _action("x3", "light.hall", "9pm", "9:30pm", state="off"),  # starts later: an intended exception
+        ]}}}
+    _, instances = planner.plan_range(date(2026, 10, 10), date(2026, 10, 10), BROOKLYN, MINHAG, cfg)
+    (c,) = planner.find_conflicts(planner.Timeline(instances), [])
+    assert c.kind == "same" and {c.a.action_id, c.b.action_id} == {"x1", "x2"}
+
+
+def test_conflicts_counted_across_weeks() -> None:
+    cfg = {**CONFIG, "routines": {**CONFIG["routines"], "std_night": {
+        "id": "std_night", "name": "Standard Friday night", "part": "night", "actions": [
+            _action("s3", "switch.entryway_stairwell", "sunset", "midnight-2H")]},
+        "baseline": {"id": "baseline", "name": "Baseline", "part": "block", "actions": [
+            _action("b9", "light.entryway_stairwell", "block_start", "block_end", state="off")]}}}
+    _, instances = planner.plan_range(date(2026, 11, 1), date(2026, 11, 28), BROOKLYN, MINHAG, cfg)
+    (c,) = planner.find_conflicts(planner.Timeline(instances), [LINK])
+    assert c.count == 4

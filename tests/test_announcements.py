@@ -1,3 +1,4 @@
+from zoneinfo import ZoneInfo
 """Announcement times: candle lighting, shkia, havdalah, Yom Tov chains, DST."""
 
 from datetime import date, datetime, time, timedelta
@@ -8,7 +9,7 @@ from custom_components.shabbot.core import astro, jcal
 from custom_components.shabbot.voice import announcements
 from custom_components.shabbot.voice.wording import about_minutes, natural_time
 
-BROOKLYN = astro.Location(40.6501, -73.94958, "America/New_York", 18)
+BROOKLYN = astro.Location(40.6501, -73.94958, ZoneInfo("America/New_York"), 18)
 TZ = BROOKLYN.tzinfo
 
 

@@ -335,6 +335,30 @@ export interface RowCheck {
   after_end_example: { key: string; title: string; start: string; end: string } | null;
 }
 
+/** One side of a conflict: a row that wants the device in `state`. */
+export interface ConflictSide {
+  entity_id: string;
+  name: string;
+  routine_id: string;
+  routine_name: string;
+  action_id: string;
+  row: number | null;
+  part: Part | null;
+  state: "on" | "off";
+  instance_key: string;
+}
+
+/** Two rows that want opposite states for one device at the same time. */
+export interface Conflict {
+  /** same: one entity, rows tie; otherwise two entities for one device. */
+  kind: "same" | "wrapper" | "group" | "device";
+  a: ConflictSide;
+  b: ConflictSide;
+  start: string;
+  end: string;
+  count: number;
+}
+
 /** One device change in test mode, and the row time that caused it. */
 export interface SimCommand {
   entity_id: string;

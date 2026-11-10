@@ -4,7 +4,7 @@ Run:  DYLD_FALLBACK_LIBRARY_PATH=/usr/local/lib uvx --with cairosvg --with fontt
 
 Outputs
   assets/*.svg, assets/*.png                      sources and previews
-  custom_components/shabbot/brand/*.png           shown by Home Assistant (Integrations page, HACS)
+  custom_components/shabbot/brand/*.png           shown by Home Assistant (Integrations page, Marketplace)
   custom_components/shabbot/static/shabbot-icons.js  "shabbot:logo" icon for the HA sidebar
   frontend/src/brand.ts                           icon used in the panel header
 
@@ -252,7 +252,7 @@ def main() -> None:
     (ASSETS / "banner.svg").write_text(banner(f))
     png(banner(f), ASSETS / "banner.png", 1280, 520)
 
-    # Home Assistant brand images (Integrations page / HACS): icon 256 + @2x, logo shortest side 128-256.
+    # Home Assistant brand images (Integrations page / Marketplace): icon 256 + @2x, logo shortest side 128-256.
     png(tile("blue"), BRAND / "icon.png", 256, 256)
     png(tile("blue"), BRAND / "icon@2x.png", 512, 512)
     png(tile("dark"), BRAND / "dark_icon.png", 256, 256)

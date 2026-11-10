@@ -11,8 +11,8 @@ from custom_components.shabbot.const import DOMAIN
 from custom_components.shabbot.core import astro, jcal
 from custom_components.shabbot.core.dayinfo import build_day_info, location_is_israel
 
-BROOKLYN = astro.Location(40.6501, -73.94958, "America/New_York", 18)
-JERUSALEM = astro.Location(31.7683, 35.2137, "Asia/Jerusalem", 754)
+BROOKLYN = astro.Location(40.6501, -73.94958, ZoneInfo("America/New_York"), 18)
+JERUSALEM = astro.Location(31.7683, 35.2137, ZoneInfo("Asia/Jerusalem"), 754)
 NY = ZoneInfo("America/New_York")
 
 # hebcal.com zmanim for Brooklyn, elevation 0, 2026-10-20.

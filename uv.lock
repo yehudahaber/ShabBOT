@@ -2511,7 +2511,7 @@ wheels = [
 
 [[package]]
 name = "shabbot"
-version = "0.2.7"
+version = "0.2.10"
 source = { virtual = "." }
 
 [package.dev-dependencies]

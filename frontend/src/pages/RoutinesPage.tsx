@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { callWS } from "../hass";
-import { errorMessage, invalidateAll, queryClient, useConfig } from "../api";
+import { errorMessage, invalidateAll, queryClient, useConfig, useConflicts } from "../api";
 import { Field, Icon, Loading, SaveBar } from "../components/ui";
 import { EntityMultiPicker, ExprInput } from "../components/inputs";
 import { DragHandle, tempId, useReorder } from "../components/reorder";
 import { dateShort, PART_LABEL, time } from "../format";
-import { entitiesOf, type Action, type Config, type Meta, type Part, routineList, type Routine, type RowCheck } from "../types";
+import { entitiesOf, type Action, type Config, type Conflict, type ConflictSide, type Meta, type Part, routineList, type Routine, type RowCheck } from "../types";
 
 const PARTS: Part[] = ["night", "day", "block"];
 const PART_HELP: Record<Part, string> = {
@@ -43,6 +43,8 @@ export function RoutinesPage() {
 
   const routines = useMemo(() => (data ? routineList(data.config) : []), [data]);
   const checks = useRowChecks(draft);
+  const draftConflicts = useDraftConflicts(draft);
+  const { data: allConflicts } = useConflicts();
   const reorder = useReorder(draft?.actions ?? [], (actions) => setDraft((d) => d && { ...d, actions }));
   // Open the first routine on load only; later a null selection means a new, unsaved routine.
   const opened = useRef(false);
@@ -71,6 +73,10 @@ export function RoutinesPage() {
 
   const save = async () => {
     if (!draft) return;
+    if (draftConflicts.length > 0) {
+      const lines = draftConflicts.map((c) => `• ${conflictSummary(c)}`).join("\n");
+      if (!confirm(`These rows would fight over a device, so it would flicker:\n\n${lines}\n\nSave anyway?`)) return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -117,10 +123,24 @@ export function RoutinesPage() {
 
   const setAction = (i: number, patch: Partial<Action>) =>
     setDraft((d) => d && { ...d, actions: d.actions.map((a, j) => (j === i ? { ...a, ...patch } : a)) });
+  /** Swap one device in one row (or remove it, with `to` null); the row's other devices stay. */
+  const replaceDevice = (i: number, from: string, to: string | null) =>
+    setDraft((d) => d && {
+      ...d,
+      actions: d.actions.map((a, j) => {
+        if (j !== i) return a;
+        const ids = entitiesOf(a).flatMap((e) => (e === from ? (to ? [to] : []) : [e]));
+        return { ...a, entity_ids: [...new Set(ids)] };
+      }),
+    });
+  const draftKey = draft?.id || DRAFT_ID;
 
   return (
     <div className="sb-split">
       <div className="sb-stack">
+        {!!allConflicts?.length && (
+          <ConflictBanner conflicts={allConflicts} onOpen={(id) => { if (id !== draft?.id) setSelected(id); }} />
+        )}
         {PARTS.map((part) => (
           <div key={part} className="sb-stack" style={{ gap: 6 }}>
             <div className="sb-row">
@@ -208,6 +228,16 @@ export function RoutinesPage() {
                   </label>
                 )}
                 <RowMessage check={checks[i]} part={draft.part} />
+                {draftConflicts.map((c, k) => {
+                  const [me, other] = c.a.routine_id === draftKey && c.a.row === i ? [c.a, c.b]
+                    : c.b.routine_id === draftKey && c.b.row === i ? [c.b, c.a] : [null, null];
+                  return me && other && (
+                    <ConflictMessage key={k} conflict={c} me={me} other={other} routineId={draftKey}
+                      onUseOther={c.kind !== "same" && !entitiesOf(a).includes(other.entity_id)
+                        ? () => replaceDevice(i, me.entity_id, other.entity_id) : undefined}
+                      onRemove={() => replaceDevice(i, me.entity_id, null)} />
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -286,6 +316,93 @@ function RoutineList({ items, selected, onSelect, onReorder }: {
       {shown.length === 0 && <div className="sb-list-item sb-hint">None yet</div>}
     </div>
   );
+}
+
+const DRAFT_ID = "__draft__";
+
+const KIND_TEXT: Record<Conflict["kind"], string> = {
+  same: "",
+  wrapper: "one is a converted copy of the other",
+  group: "one is a group that contains the other",
+  device: "same device, same name",
+};
+
+const when = (c: Conflict) =>
+  `first ${dateShort(c.start)} ${time(c.start)}${c.count > 1 ? `, ${c.count} times in the next year` : ""}`;
+
+const rowRef = (s: ConflictSide, here?: string) =>
+  `${s.routine_id === here ? "row" : `“${s.routine_name}”, row`} ${s.row !== null ? s.row + 1 : "?"}`;
+
+/** One line for lists: who wants what. */
+function conflictSummary(c: Conflict): string {
+  if (c.kind === "same") {
+    return `${c.a.name}: ${rowRef(c.a)} turns it ${c.a.state} and ${rowRef(c.b)} turns it ${c.b.state} at the same moment (${when(c)}).`;
+  }
+  return `${c.a.name} (${c.a.entity_id}) and ${c.b.name} (${c.b.entity_id}) are one device: ${rowRef(c.a)} turns it ${c.a.state}, ${rowRef(c.b)} turns it ${c.b.state} (${when(c)}).`;
+}
+
+/** Under a row: what it fights with, and fixes that change only this device in this row. */
+function ConflictMessage({ conflict: c, me, other, routineId, onUseOther, onRemove }: {
+  conflict: Conflict; me: ConflictSide; other: ConflictSide; routineId: string;
+  onUseOther?: () => void; onRemove: () => void;
+}) {
+  const text = c.kind === "same"
+    ? `${rowRef(other, routineId)[0].toUpperCase()}${rowRef(other, routineId).slice(1)} turns ${me.name} ${other.state} at the same moment this row turns it ${me.state}, so which one wins is arbitrary (${when(c)}).`
+    : `${me.name} (${me.entity_id}) is the same device as ${other.name} (${other.entity_id}) — ${KIND_TEXT[c.kind]}. ${rowRef(other, routineId)[0].toUpperCase()}${rowRef(other, routineId).slice(1)} keeps that ${other.state} while this row turns this ${me.state}, so protection would undo each change and the light would flicker (${when(c)}).`;
+  return (
+    <div className="sb-row-msg sb-conflict">
+      <span className="sb-warn-text"><Icon name="alert" size={14} /> {text}</span>
+      <div className="sb-row" style={{ gap: 6 }}>
+        {onUseOther && (
+          <button className="sb-btn sb-btn-sm" onClick={onUseOther}
+            title={`Both rows then control ${other.entity_id}, and the meal routine wins over the baseline as usual`}>
+            Use {other.entity_id} in this row
+          </button>
+        )}
+        <button className="sb-btn sb-btn-sm sb-btn-ghost" onClick={onRemove}>Remove {me.entity_id} from this row</button>
+      </div>
+    </div>
+  );
+}
+
+/** Conflicts already in the saved config (for example after a rule or mode change). */
+function ConflictBanner({ conflicts, onOpen }: { conflicts: Conflict[]; onOpen: (routineId: string) => void }) {
+  return (
+    <div className="sb-banner sb-stack" style={{ alignItems: "stretch", gap: 6 }}>
+      <span><Icon name="alert" size={16} /> {conflicts.length === 1 ? "A device is" : `${conflicts.length} devices are`} scheduled on and off at the same time. Protection will pause instead of fighting, but the schedule won't be what you meant.</span>
+      {conflicts.map((c, i) => (
+        <div key={i} className="sb-stack" style={{ gap: 4, fontWeight: 400 }}>
+          <span className="sb-hint" style={{ color: "inherit" }}>{conflictSummary(c)}</span>
+          <div className="sb-row" style={{ gap: 6 }}>
+            {[...new Map([c.a, c.b].map((s) => [s.routine_id, s])).values()].map((s) => (
+              <button key={s.routine_id} className="sb-btn sb-btn-sm" onClick={() => onOpen(s.routine_id)}>Open “{s.routine_name}”</button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Rows of the draft that would fight over a device with this or another routine, checked as you edit. */
+function useDraftConflicts(draft: Routine | null): Conflict[] {
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  useEffect(() => setConflicts([]), [draft?.id]);
+  const key = draft ? JSON.stringify([draft.id, draft.part, draft.actions.map((a) => [a.id, entitiesOf(a), a.state, a.start, a.end, a.repeat])]) : "";
+  useEffect(() => {
+    if (!draft) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      const routine = { ...draft, id: draft.id || undefined, actions: draft.actions.map((a) => ({ ...a, repeat: a.repeat ?? null })) };
+      callWS<Conflict[]>({ type: "shabbot/conflicts", routine })
+        .then((r) => !cancelled && setConflicts(r), () => !cancelled && setConflicts([]));
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return draft ? conflicts : [];
 }
 
 /** Checks each row's start/end against every matching meal in the next year (zmanim move with the seasons). */

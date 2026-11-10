@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -13,6 +14,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 import voluptuous as vol
 
+from . import links
 from .const import (
     DEFAULT_DEVICE,
     DEFAULT_SETTINGS,
@@ -374,6 +376,64 @@ def _check_routine(m: ShabbotManager, part: str, actions: list[dict]) -> list[pl
 async def ws_routine_check(hass, connection, msg) -> None:
     actions = [{"start": a["start"], "end": a["end"], "repeat": a.get("repeat")} for a in msg["actions"]]
     connection.send_result(msg["id"], [c.to_dict() for c in _check_routine(_mgr(hass), msg["part"], actions)])
+
+
+DRAFT_ID = "__draft__"
+
+
+def _conflicts(m: ShabbotManager, draft: dict | None = None, draft_rows: list[str] | None = None,
+               ) -> list[dict[str, Any]]:
+    """Rows that would fight over one device in the next year, with the draft routine swapped in if given.
+
+    `draft_rows` lists the draft's row ids in editor order (rows still being filled in are left out of the
+    draft itself but keep their place, so row numbers match what the editor shows).
+    """
+    config = m.config
+    draft_id = None
+    if draft is not None:
+        config = copy.deepcopy(config)
+        draft_id = draft["id"]
+        config["routines"][draft_id] = draft
+    today = m.now().date()
+    _, instances = planner.plan_range(today, today + timedelta(days=365), m.location, m.minhag, config)
+    timeline = planner.Timeline(instances)
+    found = planner.find_conflicts(timeline, links.linked_pairs(m.hass, timeline.entities))
+    out = []
+    for c in found:
+        d = c.to_dict()
+        if draft_id and draft_id not in (d["a"]["routine_id"], d["b"]["routine_id"]):
+            continue
+        for side in (d["a"], d["b"]):
+            routine = config["routines"].get(side["routine_id"]) or {}
+            ids = draft_rows if side["routine_id"] == draft_id else [a.get("id") for a in routine.get("actions", [])]
+            side["row"] = ids.index(side["action_id"]) if side["action_id"] in ids else None
+            side["part"] = routine.get("part")
+            state = m.hass.states.get(side["entity_id"])
+            side["name"] = state.name if state else side["entity_id"]
+        out.append(d)
+    return out
+
+
+@websocket_api.websocket_command({vol.Required("type"): "shabbot/conflicts", vol.Optional("routine"): dict})
+@websocket_api.async_response
+@_ready
+async def ws_conflicts(hass, connection, msg) -> None:
+    raw = msg.get("routine")
+    if raw is None:
+        connection.send_result(msg["id"], _conflicts(_mgr(hass)))
+        return
+    if raw.get("part") not in PARTS:
+        raise vol.Invalid("Unknown routine part")
+    rows, actions = [], []
+    for i, action in enumerate(raw.get("actions") or []):
+        rows.append(action.get("id") or f"__row{i}")
+        try:
+            actions.append({**ACTION_SCHEMA(action), "id": rows[-1]})
+        except vol.Invalid:
+            continue  # a row still being filled in: check the others
+    draft = {"id": raw.get("id") or DRAFT_ID, "name": raw.get("name") or "This routine", "part": raw["part"],
+             "actions": actions}
+    connection.send_result(msg["id"], _conflicts(_mgr(hass), draft, rows))
 
 
 # ---------------------------------------------------------------- writes
@@ -761,6 +821,7 @@ async def ws_learn(hass, connection, msg) -> None:
 def async_setup_websocket(hass: HomeAssistant) -> None:
     for handler in (
         ws_config, ws_plan, ws_timeline, ws_preview, ws_status, ws_activity, ws_subscribe, ws_export, ws_routine_check,
+        ws_conflicts,
         ws_routine_save, ws_routine_delete, ws_routines_reorder, ws_simulate_steps, ws_simulate_start,
         ws_simulate_apply, ws_simulate_stop, ws_rules_save, ws_modes_save, ws_device_save, ws_device_delete,
         ws_zwave_preset, ws_settings_save, ws_announce_test, ws_announce_upcoming,

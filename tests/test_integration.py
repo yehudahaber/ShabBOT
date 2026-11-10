@@ -6,8 +6,10 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import Context, Event, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
@@ -74,6 +76,17 @@ def _block_times(m: ShabbotManager):
     (block,) = m.upcoming_blocks(3)
     night = block.slots[0]
     return block, night.anchors["sunset"]
+
+
+async def test_location_uses_home_assistant_time_zone(hass: HomeAssistant, manager: ShabbotManager) -> None:
+    """The zone comes from HA as an object, and follows a change to HA's zone."""
+    assert manager.location.tzinfo is dt_util.get_default_time_zone()
+    assert manager.now().tzinfo is dt_util.get_default_time_zone()
+
+    await hass.config.async_set_time_zone("Asia/Jerusalem")
+    assert str(manager.location.tzinfo) == "Asia/Jerusalem"
+    assert str(manager.now().tzinfo) == "Asia/Jerusalem"
+    assert manager.status()["location"]["time_zone"] == "Asia/Jerusalem"
 
 
 async def test_entities_created(hass: HomeAssistant, manager: ShabbotManager) -> None:
@@ -870,3 +883,80 @@ async def test_announcement_is_skipped_while_test_mode_runs(
     await _advance(hass, freezer, block.start - timedelta(minutes=59))
     assert not any(e["kind"] == "announce" for e in manager.store.activity)
     assert any(e["kind"] == "simulation" and "skipped announcement" in e["message"] for e in manager.store.activity)
+
+
+async def _one_light_two_entities(hass: HomeAssistant, manager: ShabbotManager) -> None:
+    """Make chandelier and bedroom behave like Friday's Stairwell: one light shown as two entities.
+
+    They share a device and a name, and switching either switches the other (a fresh context, as a
+    physical device reporting back does). The meal turns one on; the baseline keeps the other off.
+    """
+    entry = MockConfigEntry(domain="zwave_js")
+    entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, identifiers={("zwave_js", "1")})
+    reg = er.async_get(hass)
+    for e in ("input_boolean.chandelier", "input_boolean.bedroom"):
+        reg.async_update_entity(e, device_id=device.id, name="Stairwell")
+    await hass.async_block_till_done()
+
+    @callback
+    def mirror(event: Event) -> None:
+        new = event.data["new_state"]
+        other = "input_boolean.bedroom" if event.data["entity_id"] == "input_boolean.chandelier" else \
+            "input_boolean.chandelier"
+        if new is not None and hass.states.get(other).state != new.state:
+            hass.async_create_task(hass.services.async_call(
+                "input_boolean", f"turn_{new.state}", {"entity_id": other}, context=Context()))
+
+    from homeassistant.helpers.event import async_track_state_change_event
+    async_track_state_change_event(hass, ["input_boolean.chandelier", "input_boolean.bedroom"], mirror)
+    manager.config["routines"]["fri_standard"]["actions"] = [
+        _action("s3", "input_boolean.chandelier", "sunset", "midnight-2H")]
+    manager.config["routines"]["baseline"]["actions"] = [
+        _action("b9", "input_boolean.bedroom", "block_start", "block_end", state="off")]
+    manager.config_changed(reconcile=False)
+    await hass.async_block_till_done()
+
+
+async def test_linked_entities_with_opposite_schedules_do_not_flicker(
+        hass: HomeAssistant, manager: ShabbotManager, freezer: FrozenDateTimeFactory) -> None:
+    await _one_light_two_entities(hass, manager)
+    block, sunset = _block_times(manager)
+    await _advance(hass, freezer, block.start + timedelta(minutes=1))  # baseline keeps it off
+    await _advance(hass, freezer, sunset + timedelta(seconds=1))  # the meal turns the other entity on
+    for _ in range(12):  # five minutes of grace periods and polls
+        await _advance(hass, freezer, timedelta(seconds=30))
+    kinds = [e["kind"] for e in manager.store.activity]
+    assert "revert" not in kinds
+    conflicts = [e for e in manager.store.activity if e["kind"] == "storm"]
+    assert len(conflicts) == 1 and "control the same device" in conflicts[0]["message"]
+    assert manager.paused.get("input_boolean.bedroom") == "conflict"  # the baseline side stops fighting
+    assert _state(hass, "chandelier") == _state(hass, "bedroom") == "on"  # the meal's change stands
+
+
+async def test_conflicts_api_reports_linked_rows(hass: HomeAssistant, manager: ShabbotManager,
+                                                 hass_ws_client) -> None:
+    await _one_light_two_entities(hass, manager)
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "shabbot/conflicts"})
+    res = (await client.receive_json())["result"]
+    assert len(res) == 1 and res[0]["kind"] == "device" and res[0]["count"] >= 40
+    sides = {s["routine_id"]: s for s in (res[0]["a"], res[0]["b"])}
+    assert sides["fri_standard"]["row"] == 0 and sides["baseline"]["row"] == 0
+    assert sides["fri_standard"]["name"] == "Stairwell"
+
+    # A draft that switches the meal row to the same entity as the baseline: layering, not a conflict.
+    draft = {**manager.config["routines"]["fri_standard"], "actions": [
+        {"entity_ids": ["input_boolean.bedroom"], "state": "on", "start": "sunset", "end": "midnight-2H"},
+        {"entity_ids": [], "state": "on", "start": "sunset", "end": "11pm"}]}  # unfinished row is skipped
+    await client.send_json_auto_id({"type": "shabbot/conflicts", "routine": draft})
+    assert (await client.receive_json())["result"] == []
+
+    # A new, unsaved row keeps its place: row 2 of the draft.
+    draft["actions"][0]["entity_ids"] = ["input_boolean.hotplate"]
+    draft["actions"][1] = {"entity_ids": ["input_boolean.chandelier"], "state": "on", "start": "sunset",
+                           "end": "11pm"}
+    await client.send_json_auto_id({"type": "shabbot/conflicts", "routine": draft})
+    (c,) = (await client.receive_json())["result"]
+    side = c["a"] if c["a"]["routine_id"] == "fri_standard" else c["b"]
+    assert side["row"] == 1 and side["action_id"] == "__row1"

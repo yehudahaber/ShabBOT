@@ -1,5 +1,6 @@
 """TTS lexicon, stable briefing windows, and the day-rollover event."""
 
+from zoneinfo import ZoneInfo
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import threading
@@ -118,7 +119,7 @@ def test_briefing_and_announcements_are_stable_inside_a_window() -> None:
         assert "random." not in text
         assert "Random(" not in text
 
-    brooklyn = astro.Location(40.6501, -73.94958, "America/New_York", 18)
+    brooklyn = astro.Location(40.6501, -73.94958, ZoneInfo("America/New_York"), 18)
     morning = datetime(2026, 10, 20, 8, 0, tzinfo=brooklyn.tzinfo)
     afternoon = datetime(2026, 10, 20, 15, 0, tzinfo=brooklyn.tzinfo)
     info = build_day_info(morning, brooklyn, jcal.Minhag())

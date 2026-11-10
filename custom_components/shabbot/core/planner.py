@@ -18,7 +18,7 @@ from __future__ import annotations
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from itertools import product
+from itertools import pairwise, product
 from typing import Any
 
 from . import astro, jcal, timeexpr
@@ -403,6 +403,7 @@ class Interval:
     action_id: str
     start_expr: str = ""
     end_expr: str = ""
+    routine_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -428,7 +429,7 @@ class Timeline:
                     entity_id=a.entity_id, start=a.start, end=a.end, state=a.state, attrs=a.attrs,
                     end_state=a.end_state, priority=PRIORITY[inst.target.part], instance_key=inst.target.key,
                     routine_name=inst.routine["name"], action_id=a.action_id,
-                    start_expr=a.start_expr, end_expr=a.end_expr,
+                    start_expr=a.start_expr, end_expr=a.end_expr, routine_id=inst.resolution.routine_id or "",
                 ))
         self._bounds: dict[str, list[datetime]] = {}
         for entity_id, ivs in self.intervals.items():
@@ -527,3 +528,77 @@ def simulation_steps(timeline: Timeline, start: datetime, end: datetime) -> list
             steps.append({"at": t.isoformat(), "commands": [c.to_dict() for c in commands]})
         t = timeline.next_boundary(t)
     return steps
+
+
+# ---------------------------------------------------------------- conflicts
+
+
+@dataclass(frozen=True, slots=True)
+class Link:
+    """Two entities that drive the same physical device (see links.py)."""
+
+    a: str
+    b: str
+    kind: str  # wrapper | group | device
+
+
+@dataclass(slots=True)
+class Conflict:
+    """Two rows that want opposite states for one device at the same time."""
+
+    kind: str  # same (one entity, rows tie) | wrapper | group | device (two entities, one device)
+    a: Interval
+    b: Interval
+    start: datetime  # first time they clash
+    end: datetime
+    count: int = 1  # how many times in the planned range
+    _seen: set = field(default_factory=set, repr=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        def side(iv: Interval) -> dict[str, Any]:
+            return {"entity_id": iv.entity_id, "routine_id": iv.routine_id, "routine_name": iv.routine_name,
+                    "action_id": iv.action_id, "state": iv.state, "instance_key": iv.instance_key}
+        return {"kind": self.kind, "a": side(self.a), "b": side(self.b), "start": self.start.isoformat(),
+                "end": self.end.isoformat(), "count": self.count}
+
+
+def _record(found: dict[tuple, Conflict], kind: str, a: Interval, b: Interval, start: datetime,
+            end: datetime) -> None:
+    if (a.entity_id, a.routine_id, a.action_id) > (b.entity_id, b.routine_id, b.action_id):
+        a, b = b, a
+    key = (kind, a.entity_id, a.routine_id, a.action_id, b.entity_id, b.routine_id, b.action_id)
+    pair = (a.instance_key, a.start, b.instance_key, b.start)
+    c = found.get(key)
+    if c is None:
+        found[key] = Conflict(kind, a, b, start, end, 1, {pair})
+    elif pair not in c._seen:
+        c._seen.add(pair)
+        c.count += 1
+    elif start == c.end:  # the first clash continues past a boundary of some other row
+        c.end = end
+
+
+def find_conflicts(timeline: Timeline, links: list[Link]) -> list[Conflict]:
+    """Every pair of rows that would fight over one device.
+
+    - Linked entities (one device shown as two entities): any time both have a desired state and the states
+      differ. Protection would undo each change in turn and the light flickers.
+    - One entity: rows in the same layer that start at the same moment with opposite states, where which one
+      wins is arbitrary. Other overlaps are intended layering (a meal over the baseline, or a later row
+      inside an earlier one) and aren't reported.
+    """
+    found: dict[tuple, Conflict] = {}
+    for link in links:
+        bounds = sorted(set(timeline._bounds.get(link.a, ())) | set(timeline._bounds.get(link.b, ())))
+        for t, nxt in pairwise(bounds):
+            da, db = timeline.desired_at(link.a, t), timeline.desired_at(link.b, t)
+            if da is not None and db is not None and da.state != db.state:
+                _record(found, link.kind, da, db, t, nxt)
+    for ivs in timeline.intervals.values():
+        for i, a in enumerate(ivs):
+            for b in ivs[i + 1:]:
+                if b.start != a.start:
+                    break
+                if a.priority == b.priority and a.state != b.state:
+                    _record(found, "same", a, b, a.start, min(a.end, b.end))
+    return sorted(found.values(), key=lambda c: c.start)

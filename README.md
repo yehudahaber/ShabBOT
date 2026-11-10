@@ -1,23 +1,25 @@
-<p align="center"><img src="assets/banner.svg" alt="ShabBOT — Shabbat &amp; Yom Tov automation for Home Assistant" width="640"></p>
+<p align="center"><img src="assets/banner.svg" alt="ShabBOT: Shabbat &amp; Yom Tov automation for Home Assistant" width="640"></p>
 
-# ShabBOT
+<p align="center">
+  <a href="https://github.com/aniceberg/ShabBOT/releases/latest"><img src="https://img.shields.io/github/v/release/aniceberg/ShabBOT?label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/Home%20Assistant-2026.9%2B-41BDF5" alt="Home Assistant 2026.9 or newer">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/aniceberg/ShabBOT" alt="License: GPL-3.0"></a>
+</p>
 
-Shabbat & Yom Tov automation for Home Assistant. Home Assistant stays the hub for every device (Lutron, SmartThings, Z-Wave, Kasa, …); ShabBOT decides what those devices do during Shabbat and Yom Tov, and keeps them that way.
+# ShabBOT for Home Assistant
 
-- **Calendar** (Year / Month / Week / Day) of every Shabbat and Yom Tov with the routines scheduled in it. Click an entry to drill into the routine, then into each device's on/off windows.
-- **Routines** like "Standard Friday night", "Friday night hosting guests", "Friday night away", built from device windows such as *chandelier on from `sunset+18m` until `11:45pm`*.
-- **Default rules** pick a routine for each meal (Shabbat night, Yom Tov day 1 lunch, 2nd night of Pesach, …). Change or skip any single meal from the calendar without touching the rule.
-- **Summer / Vacation modes** for a date range or open-ended.
-- **Device protection**: during Shabbat/Yom Tov, a device that changes unexpectedly is put back (on every state change, plus a check every minute).
-- **Intentional overrides**: a Zooz triple-tap (or a learned button press, or a quick flip pattern on Caséta/Kasa/Wemo) pauses protection for that device for N minutes; the opposite gesture ends it early.
-- Zmanim are calculated by ShabBOT itself (NOAA solar algorithm, checked against hebcal.com), so it doesn't depend on Home Assistant's Jewish Calendar integration.
+Set your home's Shabbat and Yom Tov schedule once, and ShabBOT runs it. It works out the times, turns your devices on and off, and puts back anything that changes by accident. Your devices stay in Home Assistant, whether they're Lutron, SmartThings, Z-Wave, Kasa or anything else.
 
-## Install (HACS)
+- **Calendar:** see every Shabbat and Yom Tov by year, month, week or day, with the routine planned for each meal.
+- **Routines:** build plans like "Standard Friday night" or "Lunch hosting guests" from rows such as *chandelier on from `sunset+18m` until `11:45pm`*.
+- **Default rules:** choose a routine for each meal once, then change or skip any single meal from the calendar.
+- **Summer and vacation modes:** switch plans for a date range, or until you end the mode.
+- **Device protection:** if a device changes unexpectedly during Shabbat or Yom Tov, ShabBOT puts it back.
+- **Intentional overrides:** a triple-tap or a learned button press pauses protection on a device for a set time.
+- **Test mode:** rehearse the schedule on your real devices before you rely on it.
+- **Built-in zmanim:** ShabBOT calculates its own times and doesn't need Home Assistant's Jewish Calendar integration.
 
-1. HACS → ⋮ → **Custom repositories** → add this repository's URL, category **Integration**.
-2. Install **ShabBOT**, then restart Home Assistant.
-3. **Settings → Devices & services → Add integration → ShabBOT.** Set candle-lighting minutes, havdalah rule, and Israel/Diaspora. Location and time zone come from Home Assistant.
-4. Open **ShabBOT** in the sidebar.
+## What you need
 
 ### Install the announcements pre-release
 
@@ -30,35 +32,32 @@ Announcements, the kids' daily briefing, and the Jewish-calendar sensors are a p
 Requires Home Assistant 2026.9.0 or newer, the same as upstream ShabBOT. Pre-rendered clips are written to Home Assistant's local media folder (`config/media` on Container and Core, `/media` on Home Assistant OS) so Sonos can fetch them.
 
 ShabBOT starts in **dry run**: it logs what it would do without touching any device. Turn it off ("Go live") after a Shabbat of watching the Activity tab.
+- Home Assistant 2026.9 or newer, on any install type (OS, Supervised, Container or Core)
+- Your home's location and time zone set correctly in Home Assistant, because all zmanim are calculated from them
+- Devices already in Home Assistant: lights, switches, input booleans, fans, climate, covers, media players or water heaters
+- An administrator login to make changes (other users can open the panel)
 
-Works on every Home Assistant install type (OS, Supervised, Container, Core). Install it separately in each home; use **Settings → Export / Import** to copy routines between homes.
+## Set it up
 
-## Concepts
+### 1. Install
 
-**Block**: one continuous Shabbat/Yom Tov, from candle lighting to havdalah (1–3 days).
-**Slot**: each day in a block has a *night* meal (the evening before) and a *day* meal. Slot keys look like `2026-10-10/night`.
+Open **Settings → Marketplace**, search for **ShabBOT** and choose **Install**. Restart Home Assistant if it asks you to.
 
-**Routine**: runs for a night, a day, or the whole block ("baseline"). Each row keeps one or more devices on (or off) between two times (add several devices to a row to give them the same schedule). Drag the ⋮⋮ handle to reorder rows, routines within each list, or default rules (where order breaks ties). **Duplicate routine** makes an editable copy (e.g. start "Lunch hosting guests" from "Standard lunch"), and **Copy rows from…** adds another routine's rows to the one you're editing. When meal routines and the baseline overlap, the meal wins.
+If the search finds nothing yet, add `aniceberg/ShabBOT` by link in the Marketplace, which needs a GitHub connection.
 
-**Baseline rows** apply to every Shabbat/Yom Tov whatever the meal plans, and each can **repeat**:
-- *Once* (default): times count from the first evening, so `7:00am` means the next morning and `3:00pm` means that Friday afternoon.
-- *Every night*: read in each evening's frame (evening → next morning), e.g. bedroom lights off `sunset` → `sunrise` every night of a 2- or 3-day Yom Tov.
-- *Every day*: read on each day itself, e.g. closet lights on `7:00am` → `10:00am` every morning of a 2- or 3-day Yom Tov.
+The Marketplace needs Home Assistant 2026.11 or newer. On older versions, use HACS: search for **ShabBOT**, or add this repository under ⋮ → **Custom repositories** with the category **Integration**.
 
-**Time expressions**
+### 2. Add the integration
 
-| Example | Meaning |
-|---|---|
-| `sunset+18m`, `candle_lighting-30m`, `tzeit+1h30m` | zman with an offset |
-| `11:45pm`, `23:45`, `1:00am` | clock time (on a night slot, morning times mean the next morning) |
-| `midnight` | 12:00 AM after the evening |
-| `max(sunset+18m, 7pm)` | later of the two |
-| `10pm` → `6am`, `sunset` → `sunrise` | an end before the start is read as the next day ("crosses midnight") |
-| `slot_start`, `slot_end` | start/end of this meal period |
+[![Add ShabBOT to Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=shabbot)
 
-Available zmanim: `alot`, `sunrise`, `chatzot`, `mincha_gedola`, `plag`, `candle_lighting` (when candles are lit that night), `sunset`, `tzeit` (8.5°), `havdalah` (the end of this Shabbat/Yom Tov, as configured).
+Or go to **Settings → Devices & services → Add integration → ShabBOT**. Then set your minhagim:
 
-**Early Shabbat (summer)**: Settings → Early Shabbat lights candles at a fixed time (e.g. 7:00 PM) on Fridays when the normal time would be later than a cutoff (e.g. 7:15 PM), never before plag hamincha, and only on a plain Shabbat (not when it is also Yom Tov). Device protection starts at the early time, and routine rows written with `candle_lighting` move with it; rows written with `sunset` don't, so prefer `candle_lighting` for anything tied to the start of Shabbat.
+| Setting | Starts at | Notes |
+| --- | --- | --- |
+| Candle lighting | 18 minutes before sunset | Use your community's time |
+| Havdalah | Sun 8.5° below the horizon | Or choose a fixed number of minutes after sunset |
+| Israel | Off | Turn on for one-day Yom Tov |
 
 ## Voice module
 
@@ -108,21 +107,20 @@ Players, the TTS engine, the voice, per-player leads, and the pronunciation-file
 1. A choice made for that date on the calendar (a different routine, or *Skip this meal*).
 2. An active Summer/Vacation mode.
 3. The default rule with the most matching conditions (kind of day, holiday, day number, weekday); ties go to the rule higher in the list.
+You can change these later on ShabBOT's **Settings** tab. **ShabBOT** now appears in the sidebar.
 
-## Overrides
+ShabBOT starts in **dry run**: it logs what it would do without touching any device. It stays that way until you choose to go live in step 6.
 
-Configure each device on the **Devices** tab.
+### 3. Fill in your routines
 
-| Gesture | Use for | How |
-|---|---|---|
-| **Button event** | Zooz / Z-Wave scene switches, Lutron Pico & RA3 keypads, ZHA/Hue remotes | "Use Z-Wave triple-tap" fills in Central Scene 3× (scene 001 = up paddle starts, 002 = down paddle ends). Or press **Learn** and do the gesture. |
-| **Flip the switch quickly** | Caséta, Kasa, Wemo (on/off only) | e.g. 3 flips within 6 seconds starts (and ends) an override |
-| **Keep turning it back** | on/off-only switches | if someone undoes ShabBOT's correction 3 times in 2 minutes, the last one sticks |
-| **Override now** | anyone | panel button, or `shabbot.start_override` from a dashboard |
+Open the **Routines** tab. ShabBOT starts you off with routines such as "Standard Friday night", "Standard lunch" and "Yom Kippur", but they're empty until you add devices.
 
-Z-Wave note: Zooz switches send scene events only when *scene control* is enabled in the device parameters.
+Choose a routine, then choose **Add device** for each row:
 
-"Also override these devices" lets a single switch's gesture release a whole room.
+- **Devices:** one or more devices that share this schedule.
+- **State:** on or off.
+- **From** and **Until:** a zman with an offset, like `sunset+18m`, or a clock time, like `11:45pm`.
+- **Afterwards:** what to do when the row ends.
 
 ## Jewish calendar
 
@@ -156,17 +154,15 @@ ShabBOT can answer "what day is it?" for a dashboard, a voice assistant, or a ph
 `shabbot.get_day_info` returns the same facts as JSON, plus `summary`, a short factual sentence. `text` is that same sentence. `spoken` is it after the pronunciation lexicon, which is what to send to TTS. The sensors stay on the display spelling. Leave `date` empty for right now. Pass a civil `date` (`2026-10-20`) for that day's daytime, with no shkia rollover. The kids' script is a separate action, `shabbot.get_daily_briefing`, and only when the voice module is on.
 
 ## Test mode
+Use the **Baseline** routine for anything that applies to every Shabbat and Yom Tov. Meal routines take priority over it while they run. See the [time formats and routine details](docs/reference.md#concepts).
 
-The **Test** tab rehearses the schedule on your real devices. Pick a range (it defaults to the next Shabbat/Yom Tov, an hour either side) and ShabBOT steps through every scheduled change in it, grouped by time:
+### 4. Check your default rules
 
-1. It lists what's about to change, e.g. `Simulating 10/23/26 @ 5:44 PM (Candle lighting − 20 min) events: Master Bedroom: OFF`. Times that come from zmanim show where they came from. You can first flip those devices to the opposite state, so you can see the change happen.
-2. **Begin test** sends the changes (even in dry run). Then mark the event **Pass** or **Fail**; on Fail, mark each device.
-3. **Skip** moves on without testing (its devices are marked skipped). **Back** returns to an earlier event: its results are kept unless you press **Re-test**.
-4. At the end, or if you **Cancel test** midway, a summary lists every event done so far with each device's Pass/Fail/Skipped; **Copy results** copies it as text.
+The **Default rules** tab chooses a routine for each meal. The starter rules already cover Shabbat night, Yom Tov night, lunch, the baseline and Yom Kippur, so you may only need to add rules for special cases.
 
-While a test runs, protection and the real schedule are paused. When it ends (or after 30 idle minutes), every device it touched goes back to what the schedule wants now, or else to how it was before. Tests can't start during Shabbat/Yom Tov.
+**Coming up** on that tab shows what the rules pick for the next few weeks, and the **Calendar** tab shows the full year.
 
-## Entities & actions
+### 5. Rehearse it
 
 | Entity | |
 |---|---|
@@ -211,35 +207,58 @@ Actions: `shabbot.start_override`, `shabbot.end_override`, `shabbot.set_slot_rou
 | `notes` | the parental lines that are still current, or an empty list |
 
 A Tuesday morning in Brooklyn, with no weather and no note, sounds like: "Good morning. Today is 9 Cheshvan 5787. This week's parasha is Lech-Lecha. Daf Yomi is Bechoros, daf 32. Shkia is at 6:08. Shabbat is in three days."
+Use the **Test** tab to step through the schedule on your real devices. Pick a time range, then choose **Begin test** for each event and mark it **Pass** or **Fail**.
 
-## Moving over from SmartThings / Lutron / Node-RED
+The test really does change your devices, even in dry run. When it ends, they go back to what the schedule wants now, or else to how they were. You can't start a test during Shabbat or Yom Tov. See the [test mode details](docs/reference.md#test-mode).
 
-1. Build routines and default rules in ShabBOT; leave dry run on.
-2. Watch one Shabbat: compare ShabBOT's Activity tab with what the old automations did.
-3. Turn off the old Shabbat automations (SmartThings routines, Lutron schedules, Node-RED flows, HA automations that use `issur_melacha_in_effect`).
-4. Turn dry run off.
+### 6. Watch one Shabbat, then go live
 
-## Development
+1. Leave dry run on for one Shabbat. If other automations still run your home, compare what they do with what the **Activity** tab says ShabBOT would have done.
+2. Turn off your old Shabbat automations, so they don't compete with ShabBOT. These might be SmartThings routines, Lutron schedules, Node-RED flows, or Home Assistant automations that use `issur_melacha_in_effect`.
+3. Choose **Go live** in the banner at the top of the panel.
 
-```bash
-uv sync                      # Python 3.14, pinned Home Assistant test harness
-uv run pytest -q             # zmanim vs hebcal.com, planner, executor/protection/override flows
-cd frontend && npm ci && npm run build   # builds custom_components/shabbot/frontend/shabbot-panel.js
-```
+## Using it
 
-Run a throwaway Home Assistant against the working tree:
+### Change one meal
 
-```bash
-uv run hass -c .devha        # .devha/custom_components/shabbot → ../../custom_components/shabbot
-```
+On the **Calendar** tab, select a meal, then choose a different routine or **Skip this meal**. Your default rules stay as they are.
 
-Brand assets (integration icon/logo, sidebar icon, panel header icon, this README's banner) are generated from vector shapes:
+### Summer and vacation
 
-```bash
-DYLD_FALLBACK_LIBRARY_PATH=/usr/local/lib uvx --with cairosvg --with fonttools python assets/build_brand.py
-```
+On the **Summer & vacation** tab, add a mode with its dates and its routines, or tick **No end date**. An active mode takes priority over your default rules, but not over a choice for a single date on the calendar.
 
-Release: publish a GitHub release tagged `vX.Y.Z`; the workflow builds the panel and attaches `shabbot.zip` for HACS.
+For early Shabbat in the summer, go to the **Settings** tab and turn on **Start Shabbat early in the summer**. Write routine rows with `candle_lighting` rather than `sunset` if they should move with it.
+
+### Let someone override a device
+
+Protection puts a device back when someone changes it, so give people a way to change it on purpose. On the **Devices** tab, choose **Configure** next to a device and pick a gesture:
+
+| Gesture | Works with |
+| --- | --- |
+| **Button event** | Zooz and other Z-Wave scene switches, Lutron Pico and RA3 keypads, ZHA and Hue remotes |
+| **Flip the switch quickly** | On/off devices such as Caséta, Kasa and Wemo |
+| **Keep turning it back** | On/off switches: if someone keeps undoing ShabBOT's correction, their change sticks |
+
+Zooz switches send these events only when scene control is enabled in the device's parameters. See the [override details](docs/reference.md#overrides).
+
+### If ShabBOT stops correcting a device
+
+If a device keeps changing back, ShabBOT eventually stops correcting it, by default after 5 corrections in 10 minutes. The **Devices** tab shows it as **Paused**. Open the device and choose **Resume protection**.
+
+To be told when this happens, choose a notification service on the **Settings** tab.
+
+### More than one home
+
+Install ShabBOT separately in each home. To copy your setup, use **Copy between homes** on the **Settings** tab: **Export…** in one home and **Import…** in the other.
+
+## Learn more
+
+- [Reference](docs/reference.md): time formats, how a routine is chosen, overrides, test mode, entities and actions
+- [Contributing](CONTRIBUTING.md): development setup, brand images and releases
+
+## Getting help
+
+Open a [GitHub issue](https://github.com/aniceberg/ShabBOT/issues). Tell us your Home Assistant version, your ShabBOT version and what the **Activity** tab shows. If a test failed, **Copy results** on the **Test** tab gives you a summary to paste in.
 
 ## License
 

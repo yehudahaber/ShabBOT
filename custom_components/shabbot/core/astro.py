@@ -7,9 +7,8 @@ KosherJava's NOAACalculator and hebcal's @hebcal/noaa. All functions are pure.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo as TzInfo
 import math
-from zoneinfo import ZoneInfo
 
 # Zenith angles, in degrees from vertical.
 GEOMETRIC_ZENITH = 90.0
@@ -20,16 +19,12 @@ EARTH_RADIUS_KM = 6356.9
 
 @dataclass(frozen=True, slots=True)
 class Location:
-    """A point on Earth plus its IANA time zone."""
+    """A point on Earth plus its time zone."""
 
     latitude: float
     longitude: float
-    time_zone: str
+    tzinfo: TzInfo
     elevation_m: float = 0.0
-
-    @property
-    def tzinfo(self) -> ZoneInfo:
-        return ZoneInfo(self.time_zone)
 
 
 def _julian_day(d: date) -> float:

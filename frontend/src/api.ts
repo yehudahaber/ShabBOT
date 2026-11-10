@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { callWS } from "./hass";
-import type { ActivityEntry, Config, Interval, Meta, Plan, Status } from "./types";
+import type { ActivityEntry, Config, Conflict, Interval, Meta, Plan, Status } from "./types";
 
 export const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 } },
@@ -29,6 +29,10 @@ export const useStatus = () =>
 export const useActivity = () =>
   useQuery({ queryKey: ["activity"], queryFn: () => callWS<ActivityEntry[]>({ type: "shabbot/activity", limit: 500 }) });
 
+/** Rows anywhere in the config that would fight over one device in the next year. */
+export const useConflicts = () =>
+  useQuery({ queryKey: ["conflicts"], queryFn: () => callWS<Conflict[]>({ type: "shabbot/conflicts" }) });
+
 /** Any write: send it, then refresh everything derived from config. */
 export function useSave<V extends Record<string, unknown>>(type: string) {
   return useMutation({
@@ -38,7 +42,7 @@ export function useSave<V extends Record<string, unknown>>(type: string) {
 }
 
 export function invalidateAll(): void {
-  for (const key of ["config", "plan", "timeline", "status"]) queryClient.invalidateQueries({ queryKey: [key] });
+  for (const key of ["config", "plan", "timeline", "status", "conflicts"]) queryClient.invalidateQueries({ queryKey: [key] });
 }
 
 export function errorMessage(err: unknown): string {

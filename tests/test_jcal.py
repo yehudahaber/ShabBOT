@@ -3,14 +3,15 @@
 from datetime import date, datetime, time, timedelta
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.shabbot.core import astro, jcal
 
 FIXTURES = Path(__file__).parent / "fixtures"
-BROOKLYN = astro.Location(40.6501, -73.94958, "America/New_York", 18)
-JERUSALEM = astro.Location(31.76904, 35.21633, "Asia/Jerusalem", 786)
+BROOKLYN = astro.Location(40.6501, -73.94958, ZoneInfo("America/New_York"), 18)
+JERUSALEM = astro.Location(31.76904, 35.21633, ZoneInfo("Asia/Jerusalem"), 786)
 
 
 def _load(name: str) -> list[dict]:

@@ -21,6 +21,7 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.util import dt as dt_util
 
+from . import links
 from .const import EVENT_DAY_ROLLOVER, PLAN_HORIZON_DAYS, POLL_SECONDS, SIGNAL_ACTIVITY, SIGNAL_UPDATE, SIMULATION_IDLE_MINUTES
 from .core import astro, dayinfo, gestures, jcal, planner
 from .store import ShabbotStore, device_config
@@ -100,6 +101,7 @@ class ShabbotManager:
         self._override_timers: dict[str, CALLBACK_TYPE] = {}
         self._reverts: dict[str, deque[datetime]] = {}
         self._trackers: dict[str, gestures.GestureTracker] = {}
+        self.links: dict[str, list[planner.Link]] = {}  # entity -> other entities on the same device
         self._unsubs: list[CALLBACK_TYPE] = []
         self._state_unsub: CALLBACK_TYPE | None = None
         self._event_unsubs: list[CALLBACK_TYPE] = []
@@ -129,7 +131,7 @@ class ShabbotManager:
         return astro.Location(
             latitude=s["latitude"] if s.get("latitude") is not None else c.latitude,
             longitude=s["longitude"] if s.get("longitude") is not None else c.longitude,
-            time_zone=c.time_zone,
+            tzinfo=dt_util.get_default_time_zone(),
             elevation_m=float(c.elevation or 0),
         )
 
@@ -153,7 +155,7 @@ class ShabbotManager:
         return dayinfo.build_day_info(self.now() if when is None else when, self.location, self.minhag)
 
     def now(self) -> datetime:
-        return dt_util.now().astimezone(self.location.tzinfo)
+        return dt_util.now()
 
     # ------------------------------------------------------------ lifecycle
 
@@ -199,6 +201,10 @@ class ShabbotManager:
         _, self.instances = self.plan(today - timedelta(days=2), today + timedelta(days=PLAN_HORIZON_DAYS))
         self.timeline = planner.Timeline(self.instances)
         self._trackers = {}
+        self.links = {}
+        for link in links.linked_pairs(self.hass, self.timeline.entities):
+            self.links.setdefault(link.a, []).append(link)
+            self.links.setdefault(link.b, []).append(link)
         self._subscribe_states()
         self._subscribe_events()
         self._schedule_next_boundary()
@@ -473,6 +479,9 @@ class ShabbotManager:
             return
         if matches(state, desired.state):
             return
+        if other := self._opposing_link(entity_id, desired.state, now):
+            self._pause_conflict(entity_id, other)
+            return
         window = timedelta(minutes=float(self.settings.get("storm_window_min", 10)))
         q = self._reverts.setdefault(entity_id, deque())
         while q and now - q[0] > window:
@@ -486,6 +495,31 @@ class ShabbotManager:
             return
         q.append(now)
         await self._apply(entity_id, desired.state, desired.attrs, "protection: undid an unexpected change", "revert")
+
+    def _opposing_link(self, entity_id: str, state: str, now: datetime) -> str | None:
+        """Another entity for the same device that ShabBOT is protecting in the opposite state right now."""
+        for link in self.links.get(entity_id, ()):
+            other = link.b if link.a == entity_id else link.a
+            desired = self.protected_desired(other, now)
+            if desired is not None and desired.state != state:
+                return other
+        return None
+
+    @callback
+    def _pause_conflict(self, entity_id: str, other: str) -> None:
+        """Stop two entities for one device from undoing each other's changes (the light would flicker)."""
+        for e in (entity_id, other):
+            self.paused[e] = "conflict"
+            self._cancel_revert(e)
+        names = []
+        for e in (entity_id, other):
+            st = self.hass.states.get(e)
+            names.append(f"{st.name if st else e} ({e})")
+        msg = (f"Conflict: {names[0]} and {names[1]} control the same device but are scheduled in opposite "
+               "states. Protection is paused for both until their next scheduled change. Fix it in Routines.")
+        self.log("storm", msg, entity_id, other=other)
+        self.notify(msg)
+        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
 
     @callback
     def _poll(self, _now: datetime) -> None:
@@ -692,6 +726,6 @@ class ShabbotManager:
             "simulation": self.simulation,
             "next_boundary": self._next_boundary.isoformat() if self._next_boundary else None,
             "location": {"latitude": self.location.latitude, "longitude": self.location.longitude,
-                         "time_zone": self.location.time_zone, "elevation": self.location.elevation_m},
+                         "time_zone": self.hass.config.time_zone, "elevation": self.location.elevation_m},
             "entities": rows,
         }

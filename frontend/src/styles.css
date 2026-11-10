@@ -1211,3 +1211,16 @@ button.sb-list-item:hover {
   padding-left: 12px;
   border-left: 3px solid var(--border);
 }
+
+.sb-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+
+.sb-conflict svg {
+  vertical-align: -2px;
+}
